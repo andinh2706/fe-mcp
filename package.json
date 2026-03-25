@@ -1,0 +1,35 @@
+{
+  "name": "react-debug-mcp",
+  "version": "1.0.0",
+  "description": "MCP server with high-level React-specific debugging tools for AI agents.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "bin": {
+    "react-debug-mcp": "src/index.mjs"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "debug": "LOG_LEVEL=debug LOG_FILE=./debug.log node src/index.mjs",
+    "inspect": "npx @modelcontextprotocol/inspector node src/index.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "chrome-remote-interface": "^0.33.2",
+    "source-map-js": "^1.2.1",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/inspector": "*"
+  },
+  "resolutions": {
+    "commander": "^13.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "react",
+    "debugging",
+    "chrome-devtools",
+    "cdp"
+  ],
+  "license": "MIT"
+}
