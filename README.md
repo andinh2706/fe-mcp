@@ -214,17 +214,14 @@ Add to your project's `opencode.jsonc`:
 
    OpenCode now includes these tools in the LLM's tool list.
 
-6. Server is idle — no Chrome connection yet. Connects lazily on
-   first tool call.
+6. Server connects to Chrome eagerly in the background (non-blocking).
+   If Chrome isn't ready yet, retries on first tool call.
 
 7. You ask the agent to debug something. The LLM picks a tool:
    ← Client sends:   { method: "tools/call", params: { name: "get_page_info" } }
 
-   → Server connects to Chrome (CDP_PORT=9222), enables domains,
-     attaches network collector (backfills historical requests),
-     attaches debugger collector.
-
    → Server evaluates the snippet in the browser, returns result.
+   (If eager connect failed, this tool call triggers the retry.)
 
 8. Throughout, the server sends log events:
    → { method: "notifications/message",
@@ -235,34 +232,70 @@ Add to your project's `opencode.jsonc`:
    logging panel (if running under the Inspector).
 ```
 
-### MCP Inspector (for debugging the server itself)
+### MCP Inspector
 
-The Inspector provides a web UI where you can manually invoke tools, see
-request/response JSON, and view structured log messages in real time.
+The Inspector provides a web UI to observe tool calls, request/response JSON,
+and structured log messages in real time. Two usage modes:
+
+#### Standalone (manual tool testing, no agent)
 
 ```bash
-# Basic — just the server
 npx @modelcontextprotocol/inspector \
   -e CDP_PORT=9222 \
   -e CDP_TARGET_URL=localhost:3000 \
   node src/index.mjs
-
-# With Node debugger attached (for stepping through server code)
-npx @modelcontextprotocol/inspector \
-  -e CDP_PORT=9222 \
-  node --inspect=9229 src/index.mjs
 ```
 
-The Inspector:
-1. Spawns your server as a child process (same as OpenCode would)
-2. Connects over stdio, performs the MCP handshake
-3. Opens a web UI (typically `http://localhost:6274`)
-4. You can invoke any tool manually, see the raw JSON-RPC exchange,
-   and view `notifications/message` logs in the Notifications tab
+Opens a web UI at `http://localhost:6274` where you can invoke tools manually
+and see the raw JSON-RPC exchange.
 
-Because the server declares `logging: {}` capability, all `log.info()`,
-`log.error()`, etc. calls appear as structured entries in the Inspector
-— not just raw stderr lines.
+#### With OpenCode (observe the agent's tool calls in real time)
+
+The Inspector runs a proxy on port 6277. OpenCode connects to this proxy as
+a remote MCP server, so all traffic flows through the Inspector:
+
+```
+OpenCode ──(SSE/HTTP)──→ Inspector proxy (:6277) ──(stdio)──→ react-debug-mcp
+                              │
+                     Web UI (:6274) ← you watch here in browser
+```
+
+**Step 1 — Start the Inspector in a terminal (keep it running):**
+
+```bash
+npx @modelcontextprotocol/inspector \
+  -e CDP_PORT=9222 \
+  -e CDP_TARGET_URL=localhost:3000 \
+  node /path/to/react-debug-mcp/src/index.mjs
+```
+
+Open `http://localhost:6274` in your browser.
+
+**Step 2 — Configure OpenCode to connect to the Inspector proxy:**
+
+```jsonc
+// opencode.jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "react-debug": {
+      "type": "remote",
+      "url": "http://localhost:6277/sse",
+      "enabled": true,
+      "oauth": false
+    }
+  }
+}
+```
+
+**Step 3 — Start OpenCode.** It connects to the Inspector proxy, which relays
+everything to/from the server. Every tool call the agent makes appears in the
+Inspector web UI — request params, response content, timing, and all log
+notifications.
+
+> **Note:** The Inspector must be running before you start OpenCode. For normal
+> development without the Inspector, switch back to the `"local"` config that
+> spawns the server directly (see [OpenCode config](#opencode-config) above).
 
 ### Logging
 
@@ -287,7 +320,7 @@ Once connected, every log call goes to both channels.
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` — controls stderr output |
 | `LOG_FILE` | _(none)_ | Path to write logs |
 
-Connects lazily on first tool call. To switch tabs, restart the server with a different `CDP_TARGET_URL`.
+Connects eagerly to Chrome at startup. If Chrome isn't ready, retries on first tool call. To switch tabs, restart the server with a different `CDP_TARGET_URL`.
 
 ## Centralized Limits (`src/limits.mjs`)
 

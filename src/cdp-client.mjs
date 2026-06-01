@@ -119,6 +119,20 @@ export async function getClient() {
 }
 
 /**
+ * Attempt to connect eagerly (best-effort).
+ * Called at startup so the network collector starts capturing immediately.
+ * If Chrome isn't ready yet, logs a warning and returns — tool calls will
+ * retry via getClient() later.
+ */
+export async function eagerConnect() {
+  try {
+    await getClient();
+  } catch (err) {
+    log.warn("eager connect failed — will retry on first tool call", { error: err.message });
+  }
+}
+
+/**
  * Evaluate a JS expression in the page context.
  */
 export async function evaluate(expression) {

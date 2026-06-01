@@ -8,13 +8,15 @@
  *   - chrome-devtools-mcp: automation (navigate, click, fill, screenshot, performance)
  *   - react-debug-mcp: runtime inspection (React state, store, network responses)
  *
- * Connects lazily to Chrome on first tool call via env vars:
+ * Connects eagerly to Chrome at startup so the network collector begins
+ * capturing immediately. If Chrome isn't ready, retries on first tool call.
  *   CDP_HOST, CDP_PORT, CDP_TARGET_URL
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { log } from "./logger.mjs";
+import { eagerConnect } from "./cdp-client.mjs";
 
 import { register as registerReactTools } from "./tools/react.mjs";
 import { register as registerStoreTools } from "./tools/store.mjs";
@@ -53,3 +55,7 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 log.info("tools registered: react(8), store(1), network(1), debugger(15), general(1)");
 log.info("server ready");
+
+// Connect to Chrome eagerly so network collector starts capturing immediately.
+// Non-blocking — if Chrome isn't running yet, tool calls will retry via getClient().
+eagerConnect();
