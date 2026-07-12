@@ -3,9 +3,7 @@
  * Depends on: getHookAccess
  */
 
-/* eslint-disable no-undef -- browser globals + helpers injected by bundle */
-
-import { getHookAccess } from './helpers.mjs';
+import { getHookAccess } from './helpers.js';
 
 export function pageInfo() {
   const hook = getHookAccess();
@@ -13,7 +11,7 @@ export function pageInfo() {
     || document.querySelector('[data-reactroot]')
     || document.querySelector('#__next');
 
-  const info = {
+  const info: any = {
     url: window.location.href,
     title: document.title,
     react: {

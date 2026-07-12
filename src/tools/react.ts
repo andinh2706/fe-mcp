@@ -7,10 +7,18 @@
  *   - "blank page / error screen"        → get_react_error_boundaries
  *   - "need to understand structure"     → get_component_tree
  *   - "wrong theme/auth data"            → inspect_react_context
+ *
+ * Every handler follows the same shape: build a page-side call by interpolating
+ * a bundled snippet constant and JSON.stringify-ing its arguments —
+ * `(${SNIPPET})(${JSON.stringify(arg)}, …)` — run it via evaluate(), then return
+ * the result as pretty-printed JSON text (or an isError text on throw). Argument
+ * defaults come from serverLimits() so they match the values shown in the tool
+ * descriptions. See src/snippets for what each SNIPPET does in the page.
  */
 
 import { z } from "zod";
-import { evaluate } from "../cdp-client.mjs";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { evaluate } from "../cdp-client.js";
 import {
   PAGE_INFO,
   COMPONENT_TREE,
@@ -20,18 +28,20 @@ import {
   INSPECT_CONTEXT,
   ERROR_BOUNDARY_CHECKER,
   COMPONENT_PATH,
-} from "../snippets/index.mjs";
-import { log } from "../logger.mjs";
-import { TREE_DEFAULT_MAX_DEPTH, FIND_DEFAULT_MAX_RESULTS } from "../limits.mjs";
+} from "../snippets/index.js";
+import { log } from "../logger.js";
+import { serverLimits } from "../limits.js";
 
-export function register(server) {
+const { TREE_DEFAULT_MAX_DEPTH, FIND_DEFAULT_MAX_RESULTS } = serverLimits();
+
+export function register(server: McpServer) {
 
   // ---- Orientation ----
 
   server.tool(
     "get_page_info",
-    `Get info about the current page: URL, title, React version, dev/prod mode, 
-whether Redux/Zustand stores are present, and whether React DevTools hook is 
+    `Get info about the current page: URL, title, React version, dev/prod mode,
+whether Redux/Zustand stores are present, and whether React DevTools hook is
 available. Good FIRST STEP for orientation.`,
     {},
     async () => {
@@ -39,7 +49,7 @@ available. Good FIRST STEP for orientation.`,
       try {
         const result = await evaluate(`(${PAGE_INFO})()`);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      } catch (err) {
+      } catch (err: any) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
       }
     }
@@ -49,13 +59,13 @@ available. Good FIRST STEP for orientation.`,
 
   server.tool(
     "get_component_tree",
-    `Get the React component tree. Shows component names (resolving memo, forwardRef, 
-lazy), React keys, and optionally props and hooks for each component. Use this 
-to understand the component structure before drilling into a specific component. 
+    `Get the React component tree. Shows component names (resolving memo, forwardRef,
+lazy), React keys, and optionally props and hooks for each component. Use this
+to understand the component structure before drilling into a specific component.
 Uses React DevTools hook when available for reliable root discovery.
 
-If start_selector is provided, the tree starts from the React component that owns 
-that DOM element instead of from the root. Uses findFiberByHostInstance (stable) 
+If start_selector is provided, the tree starts from the React component that owns
+that DOM element instead of from the root. Uses findFiberByHostInstance (stable)
 with __reactFiber$ fallback.`,
     {
       selector: z.string().optional().describe(
@@ -76,7 +86,7 @@ with __reactFiber$ fallback.`,
           `(${COMPONENT_TREE})(${JSON.stringify(selector || null)}, ${max_depth}, ${show_hooks}, ${show_props}, ${JSON.stringify(start_selector || null)}, ${show_function_details})`
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      } catch (err) {
+      } catch (err: any) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
       }
     }
@@ -87,10 +97,10 @@ with __reactFiber$ fallback.`,
   server.tool(
     "get_react_component_path",
     `Get the path from the root React component down to the component at a CSS selector.
-Returns an ordered array of component names showing exactly how the target component 
-is nested in the tree. Optionally includes props and hooks for each component on the 
+Returns an ordered array of component names showing exactly how the target component
+is nested in the tree. Optionally includes props and hooks for each component on the
 path. Uses findFiberByHostInstance (stable) with __reactFiber$ fallback.
-Useful for understanding where a component sits in the hierarchy without fetching the 
+Useful for understanding where a component sits in the hierarchy without fetching the
 entire tree.`,
     {
       selector: z.string().describe(
@@ -107,7 +117,7 @@ entire tree.`,
           `(${COMPONENT_PATH})(${JSON.stringify(selector)}, ${show_props}, ${show_hooks}, ${show_function_details})`
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      } catch (err) {
+      } catch (err: any) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
       }
     }
@@ -117,18 +127,18 @@ entire tree.`,
 
   server.tool(
     "find_react_component",
-    `Find all instances of a React component by name. Returns each instance with 
-its instanceIndex, React key, props, hooks, full parent path from root, and a 
-CSS selector. Use this when there are MULTIPLE instances of the same component 
+    `Find all instances of a React component by name. Returns each instance with
+its instanceIndex, React key, props, hooks, full parent path from root, and a
+CSS selector. Use this when there are MULTIPLE instances of the same component
 (e.g. list items) and you need to identify which one has the bug.
 
-You can narrow results with prop_filter to match specific prop values 
+You can narrow results with prop_filter to match specific prop values
 (e.g. {"id": 5} to find the CartItem where props.id === 5).
 
 Use start_selector to scope the search to a subtree rooted at that DOM element.
 Even with start_selector, parentPath always shows the full path from the React root.
 
-After finding the right instance, use inspect_react_component_by_name with 
+After finding the right instance, use inspect_react_component_by_name with
 instanceIndex, key, or propFilter to get full detail on that specific one.`,
     {
       name: z.string().describe(
@@ -150,7 +160,7 @@ instanceIndex, key, or propFilter to get full detail on that specific one.`,
           `(${FIND_COMPONENTS})(${JSON.stringify(name)}, ${JSON.stringify(prop_filter || null)}, ${max_results}, ${JSON.stringify(start_selector || null)}, ${show_function_details})`
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      } catch (err) {
+      } catch (err: any) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
       }
     }
@@ -160,8 +170,8 @@ instanceIndex, key, or propFilter to get full detail on that specific one.`,
 
   server.tool(
     "inspect_react_component_by_name",
-    `Inspect a SPECIFIC instance of a React component by name. Returns full detail: 
-all props, all hooks (classified as useState/useReducer/useEffect/useMemo/useRef), 
+    `Inspect a SPECIFIC instance of a React component by name. Returns full detail:
+all props, all hooks (classified as useState/useReducer/useEffect/useMemo/useRef),
 context values flowing in, parent path, and CSS selector.
 
 When multiple instances exist, target the one you want using ONE of:
@@ -184,7 +194,7 @@ If no targeting is provided, returns the first instance with a warning if multip
       show_function_details: z.boolean().optional().describe("Expand function values to {functionName, functionBody, paramCount} instead of '[function]' (default: false)"),
     },
     async ({ name, prop_filter, key, instance_index, show_function_details = false }) => {
-      const targeting = {};
+      const targeting: any = {};
       if (prop_filter) targeting.propFilter = prop_filter;
       if (key !== undefined) targeting.key = key;
       if (instance_index !== undefined) targeting.instanceIndex = instance_index;
@@ -195,7 +205,7 @@ If no targeting is provided, returns the first instance with a warning if multip
           `(${INSPECT_COMPONENT_BY_NAME})(${JSON.stringify(name)}, ${JSON.stringify(Object.keys(targeting).length > 0 ? targeting : null)}, ${show_function_details})`
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      } catch (err) {
+      } catch (err: any) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
       }
     }
@@ -205,10 +215,10 @@ If no targeting is provided, returns the first instance with a warning if multip
 
   server.tool(
     "inspect_react_component",
-    `Inspect the React component mounted at a CSS selector. Returns component name, 
-props, hooks (classified), and parent hierarchy. Use this when you already know 
-which DOM element to target (e.g. from chrome-devtools-mcp's DOM inspection). 
-For targeting by component name instead, use find_react_component or 
+    `Inspect the React component mounted at a CSS selector. Returns component name,
+props, hooks (classified), and parent hierarchy. Use this when you already know
+which DOM element to target (e.g. from chrome-devtools-mcp's DOM inspection).
+For targeting by component name instead, use find_react_component or
 inspect_react_component_by_name.`,
     {
       selector: z.string().describe(
@@ -223,7 +233,7 @@ inspect_react_component_by_name.`,
           `(${INSPECT_COMPONENT_BY_SELECTOR})(${JSON.stringify(selector)}, ${show_function_details})`
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      } catch (err) {
+      } catch (err: any) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
       }
     }
@@ -233,9 +243,9 @@ inspect_react_component_by_name.`,
 
   server.tool(
     "inspect_react_context",
-    `Inspect all React Context values flowing into a component. Walks UP the fiber 
-tree from the given selector and lists every Context.Provider with its current 
-value. Use this when a component isn't receiving the expected theme, auth, locale, 
+    `Inspect all React Context values flowing into a component. Walks UP the fiber
+tree from the given selector and lists every Context.Provider with its current
+value. Use this when a component isn't receiving the expected theme, auth, locale,
 or other context data.`,
     {
       selector: z.string().describe(
@@ -249,7 +259,7 @@ or other context data.`,
           `(${INSPECT_CONTEXT})(${JSON.stringify(selector)})`
         );
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      } catch (err) {
+      } catch (err: any) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
       }
     }
@@ -259,8 +269,8 @@ or other context data.`,
 
   server.tool(
     "get_react_error_boundaries",
-    `Check if any React Error Boundaries have caught errors, or if any Suspense 
-boundaries are showing fallback content. Also detects dev mode error overlays 
+    `Check if any React Error Boundaries have caught errors, or if any Suspense
+boundaries are showing fallback content. Also detects dev mode error overlays
 (webpack, vite). Use this when the page shows blank/broken UI or fallback content.`,
     {},
     async () => {
@@ -268,7 +278,7 @@ boundaries are showing fallback content. Also detects dev mode error overlays
       try {
         const result = await evaluate(`(${ERROR_BOUNDARY_CHECKER})()`);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      } catch (err) {
+      } catch (err: any) {
         return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
       }
     }

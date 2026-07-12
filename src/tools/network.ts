@@ -1,28 +1,34 @@
 /**
  * Network Tool
  *
- * Queries the network collector for captured request/response pairs.
+ * A thin MCP wrapper over the network collector: it maps the tool's snake_case
+ * arguments onto networkCollector.query() and renders the result as text. All
+ * capture and filtering logic lives in the collector; no CDP call happens here
+ * (query() reads the in-memory buffer), so there is nothing to try/catch.
  */
 
 import { z } from "zod";
-import * as networkCollector from "../collectors/network.mjs";
-import { log } from "../logger.mjs";
-import { NETWORK_DEFAULT_LIMIT } from "../limits.mjs";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import * as networkCollector from "../collectors/network.js";
+import { log } from "../logger.js";
+import { serverLimits } from "../limits.js";
 
-export function register(server) {
+const { NETWORK_DEFAULT_LIMIT } = serverLimits();
+
+export function register(server: McpServer) {
   server.tool(
     "get_network_responses",
-    `Get captured API requests (XHR, Fetch) and their response data. Static 
+    `Get captured API requests (XHR, Fetch) and their response data. Static
 resource requests (images, scripts, stylesheets, fonts, HTML) are excluded.
 
 Two data sources:
   - LIVE requests (captured after MCP connected): full response bodies included
-  - HISTORICAL requests (happened before MCP connected): URL, status, timing, 
-    and size only — no response bodies. If you need the body, ask the user to 
+  - HISTORICAL requests (happened before MCP connected): URL, status, timing,
+    and size only — no response bodies. If you need the body, ask the user to
     reproduce the action so it's captured live.
 
-Each result includes a "source" field ("live" or "historical") so you know 
-which have full bodies. Use this when the UI shows wrong data to check what 
+Each result includes a "source" field ("live" or "historical") so you know
+which have full bodies. Use this when the UI shows wrong data to check what
 the API actually returned.`,
     {
       url_pattern: z.string().optional().describe(

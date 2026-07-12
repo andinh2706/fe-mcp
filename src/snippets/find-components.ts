@@ -5,15 +5,13 @@
  * Depends on: (transitive via resolveFiber, buildAncestorPath)
  */
 
-/* eslint-disable no-undef -- browser globals + helpers injected by bundle */
-
 import {
   getHookAccess, findFiberByElement, getFiberRoot,
   getDisplayName, browserLimits, safeSerialize, describeFn, classifyHook, extractHooks, safeProps, fiberToSelector,
   resolveComponentFiber, resolveRootFiber, resolveFiber, buildAncestorPath,
-} from './helpers.mjs';
+} from './helpers.js';
 
-export function findComponents(targetName, propFilter, maxResults, startSelector, showFunctionDetails) {
+export function findComponents(targetName: string, propFilter: any, maxResults: number, startSelector: any, showFunctionDetails: boolean) {
   maxResults = maxResults || browserLimits().FIND_COMPONENTS_DEFAULT_MAX;
 
   const resolved = resolveFiber(startSelector);
@@ -23,11 +21,11 @@ export function findComponents(targetName, propFilter, maxResults, startSelector
   const source = resolved.source;
   const prefixPath = startSelector ? buildAncestorPath(walkRoot) : [];
 
-  const results = [];
+  const results: any[] = [];
   const searchLower = targetName.toLowerCase();
   const visited = new Set();
 
-  function matchesFilter(fiber) {
+  function matchesFilter(fiber: any) {
     if (!propFilter) return true;
     const props = fiber.memoizedProps || {};
     for (const [k, v] of Object.entries(propFilter)) {
@@ -40,7 +38,7 @@ export function findComponents(targetName, propFilter, maxResults, startSelector
     return true;
   }
 
-  function walk(fiber, parentPath) {
+  function walk(fiber: any, parentPath: any) {
     if (!fiber || results.length >= maxResults) return;
     if (visited.has(fiber)) return;  // cycle guard
     visited.add(fiber);
@@ -69,7 +67,7 @@ export function findComponents(targetName, propFilter, maxResults, startSelector
 
   walk(walkRoot, prefixPath);
 
-  const output = { query: targetName, propFilter: propFilter || null, found: results.length, source, results };
+  const output: any = { query: targetName, propFilter: propFilter || null, found: results.length, source, results };
   if (startSelector) output.startSelector = startSelector;
   return output;
 }

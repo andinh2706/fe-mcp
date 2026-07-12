@@ -6,24 +6,22 @@
  *             getDisplayName, describeFn, classifyHook, extractHooks, safeProps, fiberToSelector
  */
 
-/* eslint-disable no-undef -- browser globals + helpers injected by bundle */
-
 import {
   getHookAccess, findFiberByElement, getFiberRoot,
   getDisplayName, browserLimits, safeSerialize, describeFn, classifyHook, extractHooks, safeProps, fiberToSelector,
   resolveRootFiber,
-} from './helpers.mjs';
+} from './helpers.js';
 
-export function inspectByName(targetName, targeting, showFunctionDetails) {
+export function inspectByName(targetName: string, targeting: any, showFunctionDetails: boolean) {
   const resolved = resolveRootFiber();
   if (resolved.error) return resolved;
 
   const { fiber: root, source } = resolved;
 
   const searchLower = targetName.toLowerCase();
-  const candidates = [];
+  const candidates: any[] = [];
 
-  function walk(fiber, parentPath) {
+  function walk(fiber: any, parentPath: any) {
     if (!fiber) return;
     const name = getDisplayName(fiber);
     if (name && name.toLowerCase().includes(searchLower)) {
@@ -47,10 +45,10 @@ export function inspectByName(targetName, targeting, showFunctionDetails) {
   }
 
   // Select the target instance
-  let selected = null;
+  let selected: any = null;
 
   if (targeting?.propFilter) {
-    selected = candidates.find(c => {
+    selected = candidates.find((c) => {
       const props = c.fiber.memoizedProps || {};
       for (const [k, v] of Object.entries(targeting.propFilter)) {
         try { if (JSON.stringify(props[k]) !== JSON.stringify(v)) return false; }
@@ -64,14 +62,14 @@ export function inspectByName(targetName, targeting, showFunctionDetails) {
       availableInstances: candidates.map((c, i) => ({
         instanceIndex: i,
         key: c.fiber.key,
-        propKeys: Object.keys(c.fiber.memoizedProps || {}).filter(k => k !== 'children'),
+        propKeys: Object.keys(c.fiber.memoizedProps || {}).filter((k) => k !== 'children'),
       })),
     };
   } else if (targeting?.key) {
-    selected = candidates.find(c => c.fiber.key === targeting.key);
+    selected = candidates.find((c) => c.fiber.key === targeting.key);
     if (!selected) return {
       error: 'Found ' + candidates.length + ' instance(s) of "' + targetName + '" but none had key="' + targeting.key + '"',
-      availableKeys: candidates.map(c => c.fiber.key).filter(Boolean),
+      availableKeys: candidates.map((c) => c.fiber.key).filter(Boolean),
     };
   } else if (targeting?.instanceIndex !== undefined && targeting?.instanceIndex !== null) {
     selected = candidates[targeting.instanceIndex];
@@ -85,7 +83,7 @@ export function inspectByName(targetName, targeting, showFunctionDetails) {
   const fiber = selected.fiber;
 
   // Get context chain by walking up
-  const contexts = [];
+  const contexts: any[] = [];
   let cur = fiber.return;
   while (cur) {
     const type = cur.type;

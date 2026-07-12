@@ -3,12 +3,10 @@
  * No helper dependencies.
  */
 
-/* eslint-disable no-undef -- browser globals accessed via CDP evaluate */
-
-export function storeReader(storeType, path) {
-  function accessPath(obj, p) {
+export function storeReader(storeType: string, path: any) {
+  function accessPath(obj: any, p: any) {
     if (!p) return obj;
-    return p.split('.').reduce((o, k) => o?.[k], obj);
+    return p.split('.').reduce((o: any, k: string) => o?.[k], obj);
   }
 
   if (storeType === 'redux' || storeType === 'auto') {
@@ -32,7 +30,7 @@ export function storeReader(storeType, path) {
     }
   }
 
-  const keys = Object.keys(window).filter(k =>
+  const keys = Object.keys(window).filter((k) =>
     typeof window[k] === 'object' && window[k] && typeof window[k].getState === 'function'
   );
   if (keys.length > 0) {
@@ -44,4 +42,4 @@ export function storeReader(storeType, path) {
   return { store: 'none', note: 'No store found. Add: window.__REDUX_STORE__ = store' };
 }
 
-export const deps = [];
+export const deps: Function[] = [];

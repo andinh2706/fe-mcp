@@ -12,19 +12,25 @@
  * server connected, then decide which to reproduce for full body capture.
  */
 
-import { log } from "../logger.mjs";
-import { MAX_NETWORK_BUFFER, NETWORK_BODY_TRUNCATE, NETWORK_DEFAULT_LIMIT } from "../limits.mjs";
+import type { Client } from "chrome-remote-interface";
+import { log } from "../logger.js";
+import { serverLimits } from "../limits.js";
+import { INTERNAL_URL_PREFIXES, startsWithAny } from "../url-filters.js";
 
-/** @type {Map<string, object>} requestId → request data */
-const requests = new Map();
+const { MAX_NETWORK_BUFFER, NETWORK_BODY_TRUNCATE, NETWORK_DEFAULT_LIMIT } = serverLimits();
 
-/** URLs to ignore — Chrome internals, DevTools assets, extensions */
-const IGNORE_URL_PREFIXES = [
-  "devtools://",
-  "chrome://",
-  "chrome-extension://",
-  "data:",
-];
+/**
+ * In-memory ring buffer of captured requests, keyed by requestId (live) or a
+ * synthetic key (historical). Insertion order is oldest→newest, which the
+ * eviction logic in requestWillBeSent relies on. Capped at MAX_NETWORK_BUFFER.
+ */
+const requests = new Map<string, any>();
+
+/**
+ * Request URLs to ignore — the shared browser-internal core plus `data:`
+ * (inline data-URI requests, never real API calls).
+ */
+const IGNORE_REQUEST_PREFIXES = [...INTERNAL_URL_PREFIXES, "data:"];
 
 /** Resource types that are NOT API calls — skip capturing their bodies */
 const RESOURCE_TYPES = new Set([
@@ -42,11 +48,13 @@ const RESOURCE_TYPES = new Set([
   "CSPViolationReport",
 ]);
 
-function shouldIgnore(url) {
-  return IGNORE_URL_PREFIXES.some((prefix) => url.startsWith(prefix));
+/** Skip Chrome-internal / data-URI URLs that are never app API traffic. */
+function shouldIgnore(url: string): boolean {
+  return startsWithAny(url, IGNORE_REQUEST_PREFIXES);
 }
 
-function isApiRequest(type) {
+/** A request is an API call if its CDP resource type isn't a static asset type. */
+function isApiRequest(type: string): boolean {
   return !RESOURCE_TYPES.has(type);
 }
 
@@ -58,10 +66,10 @@ function isApiRequest(type) {
  * the MCP server connected. These entries appear with source: 'historical'
  * and have no response bodies.
  */
-export async function attach(client) {
+export async function attach(client: Client): Promise<void> {
   // ── Live capture via CDP events ──────────────────────────────────────
 
-  client.Network.requestWillBeSent((params) => {
+  client.Network.requestWillBeSent((params: any) => {
     if (shouldIgnore(params.request.url)) return;
     if (!isApiRequest(params.type)) return;
 
@@ -80,11 +88,11 @@ export async function attach(client) {
     // Evict oldest if over limit
     if (requests.size > MAX_NETWORK_BUFFER) {
       const oldest = requests.keys().next().value;
-      requests.delete(oldest);
+      if (oldest !== undefined) requests.delete(oldest);
     }
   });
 
-  client.Network.responseReceived((params) => {
+  client.Network.responseReceived((params: any) => {
     const req = requests.get(params.requestId);
     if (req) {
       req.response = {
@@ -96,7 +104,7 @@ export async function attach(client) {
     }
   });
 
-  client.Network.loadingFinished(async (params) => {
+  client.Network.loadingFinished(async (params: any) => {
     const req = requests.get(params.requestId);
     if (!req) return;
 
@@ -146,7 +154,7 @@ export async function attach(client) {
 
         // Don't overwrite live entries for the same URL that might already exist
         const alreadyLive = Array.from(requests.values()).some(
-          r => r.source === "live" && r.url === entry.url
+          (r) => r.source === "live" && r.url === entry.url
         );
         if (alreadyLive) continue;
 
@@ -179,7 +187,7 @@ export async function attach(client) {
         log.info("network backfill", { historical: backfilled, total: entries.length });
       }
     }
-  } catch (err) {
+  } catch (err: any) {
     // Non-fatal — historical backfill is best-effort
     log.debug("network backfill failed", { error: err.message });
   }
@@ -187,10 +195,18 @@ export async function attach(client) {
   log.info("network collector attached");
 }
 
+interface QueryOptions {
+  urlPattern?: string;
+  method?: string;
+  statusFilter?: string;
+  limit?: number;
+  includeHistorical?: boolean;
+}
+
 /**
  * Query captured requests.
  */
-export function query({ urlPattern, method, statusFilter, limit = NETWORK_DEFAULT_LIMIT, includeHistorical = true }) {
+export function query({ urlPattern, method, statusFilter, limit = NETWORK_DEFAULT_LIMIT, includeHistorical = true }: QueryOptions): any[] {
   let results = Array.from(requests.values());
 
   if (!includeHistorical) {
@@ -217,9 +233,11 @@ export function query({ urlPattern, method, statusFilter, limit = NETWORK_DEFAUL
     );
   }
 
-  // Most recent first, limited
+  // Take the newest `limit` entries, present most-recent-first, and shape each
+  // into the agent-facing view: JSON bodies are parsed inline; non-JSON bodies
+  // are truncated; request bodies get the same parse-or-passthrough treatment.
   return results.slice(-limit).reverse().map((r) => {
-    const entry = {
+    const entry: any = {
       url: r.url,
       method: r.method,
       status: r.response?.status || "pending",
@@ -259,7 +277,7 @@ export function query({ urlPattern, method, statusFilter, limit = NETWORK_DEFAUL
 /**
  * Clear all captured requests.
  */
-export function clear() {
+export function clear(): void {
   requests.clear();
   log.info("network collector cleared");
 }

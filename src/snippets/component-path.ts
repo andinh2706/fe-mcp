@@ -5,15 +5,13 @@
  * Depends on: (transitive via resolveComponentFiber, buildAncestorPath, buildFiberEntry)
  */
 
-/* eslint-disable no-undef -- browser globals + helpers injected by bundle */
-
 import {
   findFiberByElement, getDisplayName,
   browserLimits, safeSerialize, describeFn, classifyHook, extractHooks, safeProps,
   resolveComponentFiber, buildFiberEntry,
-} from './helpers.mjs';
+} from './helpers.js';
 
-export function componentPath(selector, showProps, showHooks, showFunctionDetails) {
+export function componentPath(selector: string, showProps: boolean, showHooks: boolean, showFunctionDetails: boolean) {
   const resolved = resolveComponentFiber(selector);
   if (resolved.error) return resolved;
 
@@ -22,7 +20,7 @@ export function componentPath(selector, showProps, showHooks, showFunctionDetail
   const opts = { showProps, showHooks, showFunctionDetails };
 
   // Collect all named components from this fiber up to root
-  const pathFromTarget = [];
+  const pathFromTarget: any[] = [];
   let cur = comp;
   while (cur) {
     const name = getDisplayName(cur);

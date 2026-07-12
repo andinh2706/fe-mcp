@@ -4,21 +4,19 @@
  * Depends on: (transitive via resolveComponentFiber)
  */
 
-/* eslint-disable no-undef -- browser globals + helpers injected by bundle */
-
 import {
   findFiberByElement, getDisplayName,
   browserLimits, safeSerialize, describeFn, classifyHook, extractHooks, safeProps,
   resolveComponentFiber,
-} from './helpers.mjs';
+} from './helpers.js';
 
-export function inspectBySelector(selector, showFunctionDetails) {
+export function inspectBySelector(selector: string, showFunctionDetails: boolean) {
   const resolved = resolveComponentFiber(selector);
   if (resolved.error) return resolved;
 
   const comp = resolved.fiber;
 
-  const hierarchy = [];
+  const hierarchy: any[] = [];
   let parent = comp.return;
   while (parent) {
     const n = getDisplayName(parent);

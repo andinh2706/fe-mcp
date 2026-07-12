@@ -5,42 +5,52 @@
  * in the generated bundle, not original source files).
  */
 
-import { log } from "../../logger.mjs";
-import { BREAKPOINT_SCOPE_MAX_PROPS, STEP_TIMEOUT_MS } from "../../limits.mjs";
+import { log } from "../../logger.js";
+import { serverLimits } from "../../limits.js";
 import {
   requireCdp, breakpoints,
   getPausedState, setPausedState,
   setPauseWaiter,
-} from "./state.mjs";
+} from "./state.js";
+
+const { BREAKPOINT_SCOPE_MAX_PROPS, STEP_TIMEOUT_MS } = serverLimits();
 
 // ---------------------------------------------------------------------------
 // Wait / Resume / Stepping
 // ---------------------------------------------------------------------------
 
 /**
- * Wait for a breakpoint to be hit. Blocks until Debugger.paused fires.
- * If already paused (buffered), returns immediately.
+ * Wait for a breakpoint to be hit, then return the stack + top-frame scope.
+ *
+ * Two cases, both correct regardless of event ordering:
+ *   - Already paused (the Debugger.paused event beat us here): the buffered
+ *     pausedState is truthy, so we skip the wait and shape it immediately.
+ *   - Not yet paused: park a one-shot waiter and race it against a timeout.
+ *     The paused handler in index.ts fires the waiter; the timeout clears it
+ *     and rejects with an actionable message.
  */
-export async function waitForBreakpoint(timeoutMs = 60000) {
+export async function waitForBreakpoint(timeoutMs = 60000): Promise<any> {
   requireCdp();
 
   let params = getPausedState();
 
   if (!params) {
     params = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
         setPauseWaiter(null);
         reject(new Error(`Timeout: no breakpoint hit within ${timeoutMs / 1000}s. Perform the action that triggers the code path, then call wait_for_breakpoint again.`));
       }, timeoutMs);
 
-      setPauseWaiter((evt) => {
+      setPauseWaiter((evt: any) => {
         clearTimeout(timer);
         resolve(evt);
       });
     });
   }
 
-  const frames = params.callFrames.map((frame, i) => ({
+  // Flatten the CDP call stack into a compact, 1-based-line view for the agent.
+
+  const frames = params.callFrames.map((frame: any, i: number) => ({
     index: i,
     functionName: frame.functionName || "(anonymous)",
     url: frame.url,
@@ -73,7 +83,7 @@ export async function waitForBreakpoint(timeoutMs = 60000) {
  * Inspect scope variables for a specific call frame (while paused).
  * frame_index 0 = top of stack.
  */
-export async function inspectScope(frameIndex = 0, maxProps = 30) {
+export async function inspectScope(frameIndex = 0, maxProps = 30): Promise<any> {
   const pausedState = getPausedState();
   if (!pausedState) throw new Error("Not paused at a breakpoint. Call wait_for_breakpoint first.");
   if (frameIndex >= pausedState.callFrames.length) {
@@ -94,7 +104,7 @@ export async function inspectScope(frameIndex = 0, maxProps = 30) {
 /**
  * Evaluate an expression in the context of a paused call frame.
  */
-export async function evaluateAtBreakpoint(expression, frameIndex = 0) {
+export async function evaluateAtBreakpoint(expression: string, frameIndex = 0): Promise<any> {
   const cdp = requireCdp();
   const pausedState = getPausedState();
   if (!pausedState) throw new Error("Not paused at a breakpoint.");
@@ -123,7 +133,7 @@ export async function evaluateAtBreakpoint(expression, frameIndex = 0) {
 }
 
 /** Resume execution. */
-export async function resume() {
+export async function resume(): Promise<void> {
   const cdp = requireCdp();
   if (!getPausedState()) throw new Error("Not paused.");
   await cdp.Debugger.resume();
@@ -131,8 +141,13 @@ export async function resume() {
   log.info("resumed execution");
 }
 
-/** Step over the current line. */
-export async function stepOver() {
+// The step helpers all follow the same shape: require a current pause, CLEAR
+// the buffered pause first (so the re-pause the step produces is the one we
+// wait for — not the stale one we're stepping away from), issue the CDP step,
+// then block on the fresh pause via waitForBreakpoint.
+
+/** Step over the current line (does not enter calls). */
+export async function stepOver(): Promise<any> {
   const cdp = requireCdp();
   if (!getPausedState()) throw new Error("Not paused.");
   setPausedState(null);
@@ -141,7 +156,7 @@ export async function stepOver() {
 }
 
 /** Step into the current function call. */
-export async function stepInto() {
+export async function stepInto(): Promise<any> {
   const cdp = requireCdp();
   if (!getPausedState()) throw new Error("Not paused.");
   setPausedState(null);
@@ -150,7 +165,7 @@ export async function stepInto() {
 }
 
 /** Step out of the current function. */
-export async function stepOut() {
+export async function stepOut(): Promise<any> {
   const cdp = requireCdp();
   if (!getPausedState()) throw new Error("Not paused.");
   setPausedState(null);
@@ -159,7 +174,7 @@ export async function stepOut() {
 }
 
 /** Check if currently paused. */
-export function isPaused() {
+export function isPaused(): boolean {
   return getPausedState() !== null;
 }
 
@@ -167,9 +182,16 @@ export function isPaused() {
 // Scope variable extraction (internal)
 // ---------------------------------------------------------------------------
 
-async function getScopeVariables(frame, maxProps) {
+/**
+ * Read the local + closure variables (and `this`) of a paused call frame into a
+ * plain, JSON-safe object. Objects are flattened to one level via their CDP
+ * preview; functions are stubbed as "[function name]"; primitives pass through.
+ * Only `local`/`closure` scopes are walked (global/module scopes are noise),
+ * `__`-prefixed internals are skipped, and each scope is capped at maxProps.
+ */
+async function getScopeVariables(frame: any, maxProps: number): Promise<any> {
   const cdp = requireCdp();
-  const result = { local: {}, closure: {} };
+  const result: any = { local: {}, closure: {} };
 
   for (const scope of frame.scopeChain) {
     if (scope.type !== "local" && scope.type !== "closure") continue;
@@ -196,7 +218,7 @@ async function getScopeVariables(frame, maxProps) {
           try {
             if (prop.value.type === "object" && prop.value.objectId) {
               if (prop.value.preview) {
-                const obj = {};
+                const obj: any = {};
                 for (const p of prop.value.preview.properties || []) {
                   obj[p.name] = p.value;
                 }
@@ -216,7 +238,7 @@ async function getScopeVariables(frame, maxProps) {
         }
         count++;
       }
-    } catch (err) {
+    } catch (err: any) {
       log.debug("scope read error", { type: scope.type, error: err.message });
     }
   }
@@ -224,7 +246,7 @@ async function getScopeVariables(frame, maxProps) {
   if (frame.this) {
     try {
       if (frame.this.preview) {
-        const obj = {};
+        const obj: any = {};
         for (const p of frame.this.preview.properties || []) {
           obj[p.name] = p.value;
         }

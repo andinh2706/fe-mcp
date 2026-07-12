@@ -3,14 +3,16 @@
   "version": "1.0.0",
   "description": "MCP server with high-level React-specific debugging tools for AI agents.",
   "type": "module",
-  "main": "src/index.mjs",
+  "main": "src/index.ts",
   "bin": {
-    "react-debug-mcp": "src/index.mjs"
+    "react-debug-mcp": "src/index.ts"
   },
   "scripts": {
-    "start": "node src/index.mjs",
-    "debug": "LOG_LEVEL=debug LOG_FILE=./debug.log node src/index.mjs",
-    "inspect": "npx @modelcontextprotocol/inspector node src/index.mjs"
+    "start": "node --env-file-if-exists=.env --import tsx src/index.ts",
+    "start:debug": "node --env-file-if-exists=.env --inspect=9229 --import tsx src/index.ts",
+    "start:inspect": "npx @modelcontextprotocol/inspector node --env-file-if-exists=.env --import tsx src/index.ts",
+    "start:inspect:debug": "npx @modelcontextprotocol/inspector node --env-file-if-exists=.env --inspect=9229 --import tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
@@ -19,7 +21,10 @@
     "zod": "^3.25.67"
   },
   "devDependencies": {
-    "@modelcontextprotocol/inspector": "*"
+    "@modelcontextprotocol/inspector": "*",
+    "@types/node": "^26.1.1",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2"
   },
   "resolutions": {
     "commander": "^13.0.0"

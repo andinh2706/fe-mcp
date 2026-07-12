@@ -27,7 +27,7 @@ A focused MCP server for **runtime debugging of React apps**. Designed to run al
 | `inspect_react_context(selector)` | All Context.Provider values flowing into a component |
 | `get_react_error_boundaries` | Error Boundaries, Suspense fallbacks, dev overlays |
 
-All inspection tools support `show_function_details` to expand function values to `{functionName, functionBody, paramCount}` instead of `"[function]"`.
+The component-inspection tools — `get_component_tree`, `get_react_component_path`, `find_react_component`, `inspect_react_component`, and `inspect_react_component_by_name` — accept `show_function_details` to expand function values to `{functionName, functionBody, paramCount}` instead of `"[function]"`.
 
 ### State & Network
 
@@ -36,13 +36,20 @@ All inspection tools support `show_function_details` to expand function values t
 | `get_store_state(path?)` | Read Redux/Zustand state with dot-path |
 | `get_network_responses(url_pattern?)` | API requests — live ones include full bodies, historical ones (before MCP connected) include URL/status/timing |
 
+`get_store_state` reads a store you expose on `window` (`__REDUX_STORE__`, `__ZUSTAND_STORE__`, or `__STORE__`). In development, drop [`react-debug-helper.ts`](react-debug-helper.ts) into your app's entry point and call `exposeStore(store, 'redux' | 'zustand')`, or set the global yourself. Without it, `get_store_state` reports `{ store: 'none' }`.
+
+### Source inspection (bundled scripts, no pause)
+
+| Tool | Purpose |
+|------|---------|
+| `list_scripts(filter?)` | Discover loaded bundled scripts when a `set_breakpoint` match is ambiguous |
+| `read_source(file)` | Read bundled/generated source from the browser — for vendor code or confirming what's loaded |
+| `search_source(query)` | Search loaded bundled scripts to narrow down which files to read from disk |
+
 ### Breakpoints (interactive, pauses execution)
 
 | Tool | Purpose |
 |------|---------|
-| `list_scripts(filter?)` | Discover loaded source files when set_breakpoint match is ambiguous |
-| `read_source(file)` | Read source from the browser — for vendor code or confirming what's loaded |
-| `search_source(query)` | Search loaded scripts to narrow down which files to read from disk |
 | `set_breakpoint(file, line)` | Set a breakpoint — read the source file from disk first to pick the line |
 | `wait_for_breakpoint` | Block until breakpoint fires, returns scope |
 | `inspect_scope(frame_index?)` | Read variables at any stack frame |
@@ -67,9 +74,9 @@ All inspection tools support `show_function_details` to expand function values t
 
 ## Debugging Workflows
 
-Line numbers on disk match the browser exactly (webpack dev server with 
-`devtool: source-map`). Read files from the filesystem to pick breakpoint 
-lines, then fix bugs by editing the same files.
+Line numbers on disk match the browser as long as your dev server emits source 
+maps (webpack `devtool: source-map`, Vite, etc.). Read files from the filesystem 
+to pick breakpoint lines, then fix bugs by editing the same files.
 
 ### Breakpoint Flow
 
@@ -157,10 +164,22 @@ Agent: (edits the API response handler on disk to fix the type)
 
 ## Setup
 
+**Requires Node ≥ 20.18** — the run scripts use `node --env-file-if-exists` and `--import tsx` (Node 22+ recommended).
+
 ```bash
 cd react-debug-mcp
-npm install
+yarn install
 ```
+
+The server is written in TypeScript and runs directly via [`tsx`](https://github.com/privatenumber/tsx) — no build step, no `dist/`. All four `start*` scripts load `.env` automatically (see [Environment Variables](#environment-variables)).
+
+| Script | Runs |
+|--------|------|
+| `yarn start` | Normal start |
+| `yarn start:debug` | Start with the Node inspector on `:9229` (attach a debugger; breakpoints map to `.ts`) |
+| `yarn start:inspect` | Start wrapped in the MCP Inspector web UI |
+| `yarn start:inspect:debug` | MCP Inspector **and** the Node inspector on `:9229` |
+| `yarn typecheck` | `tsc --noEmit` (type-check only; nothing is emitted) |
 
 ### OpenCode config
 
@@ -172,7 +191,7 @@ Add to your project's `opencode.jsonc`:
   "mcp": {
     "react-debug": {
       "type": "local",
-      "command": ["node", "/path/to/react-debug-mcp/src/index.mjs"],
+      "command": ["npx", "tsx", "/path/to/react-debug-mcp/src/index.ts"],
       "environment": {
         "CDP_PORT": "9222",
         "CDP_TARGET_URL": "localhost:3000"
@@ -195,7 +214,7 @@ Add to your project's `opencode.jsonc`:
 
 2. OpenCode reads opencode.jsonc, finds the "react-debug" MCP config.
 
-3. OpenCode spawns:  node /path/to/react-debug-mcp/src/index.mjs
+3. OpenCode spawns:  npx tsx /path/to/react-debug-mcp/src/index.ts
    with CDP_PORT=9222 and CDP_TARGET_URL=localhost:3000 in the env.
    The process's stdin/stdout become the JSON-RPC transport.
 
@@ -234,68 +253,23 @@ Add to your project's `opencode.jsonc`:
 
 ### MCP Inspector
 
-The Inspector provides a web UI to observe tool calls, request/response JSON,
-and structured log messages in real time. Two usage modes:
-
-#### Standalone (manual tool testing, no agent)
-
-```bash
-npx @modelcontextprotocol/inspector \
-  -e CDP_PORT=9222 \
-  -e CDP_TARGET_URL=localhost:3000 \
-  node src/index.mjs
-```
-
-Opens a web UI at `http://localhost:6274` where you can invoke tools manually
-and see the raw JSON-RPC exchange.
-
-#### With OpenCode (observe the agent's tool calls in real time)
-
-The Inspector runs a proxy on port 6277. OpenCode connects to this proxy as
-a remote MCP server, so all traffic flows through the Inspector:
-
-```
-OpenCode ──(SSE/HTTP)──→ Inspector proxy (:6277) ──(stdio)──→ react-debug-mcp
-                              │
-                     Web UI (:6274) ← you watch here in browser
-```
-
-**Step 1 — Start the Inspector in a terminal (keep it running):**
+The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is a web UI
+for invoking tools manually and watching the raw JSON-RPC exchange and log
+notifications in real time — no agent required. The `start:inspect` scripts wrap the
+server in it:
 
 ```bash
-npx @modelcontextprotocol/inspector \
-  -e CDP_PORT=9222 \
-  -e CDP_TARGET_URL=localhost:3000 \
-  node /path/to/react-debug-mcp/src/index.mjs
+yarn start:inspect         # Inspector UI (config from .env)
+yarn start:inspect:debug   # Inspector UI + Node inspector on :9229 (breakpoints map to .ts)
 ```
 
-Open `http://localhost:6274` in your browser.
+Both open the UI at `http://localhost:6274`. To override config without editing
+`.env`, pass `-e KEY=value` before the command:
 
-**Step 2 — Configure OpenCode to connect to the Inspector proxy:**
-
-```jsonc
-// opencode.jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "react-debug": {
-      "type": "remote",
-      "url": "http://localhost:6277/sse",
-      "enabled": true,
-      "oauth": false
-    }
-  }
-}
+```bash
+npx @modelcontextprotocol/inspector -e CDP_TARGET_URL=localhost:3000 \
+  node --env-file-if-exists=.env --import tsx src/index.ts
 ```
-
-**Step 3 — Start OpenCode.** It connects to the Inspector proxy, which relays
-everything to/from the server. Every tool call the agent makes appears in the
-Inspector web UI — request params, response content, timing, and all log
-notifications.
-
-> **Note:** The Inspector must be running before you start OpenCode. For normal
-> development without the Inspector, switch back to the `"local"` config that
-> spawns the server directly (see [OpenCode config](#opencode-config) above).
 
 ### Logging
 
@@ -314,21 +288,41 @@ Once connected, every log call goes to both channels.
 
 | Var | Default | Description |
 |-----|---------|-------------|
-| `CDP_HOST` | `localhost` | Chrome host |
+| `CDP_HOST` | `127.0.0.1` | Chrome host (see IPv4 note below) |
 | `CDP_PORT` | `9222` | Chrome remote debugging port |
 | `CDP_TARGET_URL` | _(none)_ | URL substring to match a specific tab |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` — controls stderr output |
 | `LOG_FILE` | _(none)_ | Path to write logs |
 
-Connects eagerly to Chrome at startup. If Chrome isn't ready, retries on first tool call. To switch tabs, restart the server with a different `CDP_TARGET_URL`.
+All five are parsed once in `src/env.ts` and exposed as a typed `ENV` object.
 
-## Centralized Limits (`src/limits.mjs`)
+> **Use `127.0.0.1`, not `localhost`.** Chrome's `--remote-debugging-port` binds to
+> the IPv4 loopback (`127.0.0.1`) only. On many systems — notably Windows with
+> Node 18+ — `localhost` resolves to the IPv6 loopback (`::1`) *first*, so connecting
+> to `localhost` fails with `ECONNREFUSED` even though Chrome is running. The default
+> is `127.0.0.1` for this reason; only change it if Chrome is on another host.
 
-All tuneable caps, timeouts, truncation thresholds, and defaults are defined in a single file — `src/limits.mjs`. This makes it easy to review and adjust runtime behaviour without grepping through the codebase.
+**`.env` file (recommended).** Copy `.env.example` to `.env` and edit it — the four
+`start*` scripts load it via Node's built-in `node --env-file-if-exists=.env`, so one
+edit applies to every run mode. `.env` is gitignored; `.env.example` is the committed
+template. A variable already set in your shell/CI **wins** over `.env` (Node doesn't
+override existing env), and if `.env` is absent the scripts still run using the defaults
+above.
+
+```bash
+cp .env.example .env   # then edit values
+yarn start             # picks up .env automatically
+```
+
+Connects eagerly to Chrome at startup. If Chrome isn't ready, retries on first tool call. To switch tabs, change `CDP_TARGET_URL` in `.env` (or the environment) and restart the server.
+
+## Centralized Limits (`src/limits.ts`)
+
+All tuneable caps, timeouts, truncation thresholds, and defaults are defined in a single file — `src/limits.ts`. This makes it easy to review and adjust runtime behaviour without grepping through the codebase.
 
 The file is split into two sections:
 
-**Browser-side constants** are returned by the `browserLimits()` function. Because snippet code runs inside the browser page via CDP `Runtime.evaluate()`, these values must live inside a self-contained function that the bundler can stringify. Every snippet that uses bounded serialization, hook extraction, prop walking, or DOM climbing reads its limits from `browserLimits()`.
+**Browser-side constants** are returned by the `browserLimits()` function. Because snippet code runs inside the browser page via CDP `Runtime.evaluate()`, these values must live inside a self-contained function that the bundler can stringify. (TypeScript type annotations are erased at transpile time, so the stringified output remains clean browser JS — see the note under Project Structure.) Every snippet that uses bounded serialization, hook extraction, prop walking, or DOM climbing reads its limits from `browserLimits()`.
 
 | Constant | Default | What it controls |
 |----------|---------|-----------------|
@@ -346,7 +340,7 @@ The file is split into two sections:
 | `ERROR_BOUNDARY_MAX_DEPTH` | 50 | Error boundary walk max depth |
 | `FIND_COMPONENTS_DEFAULT_MAX` | 20 | `findComponents` default result cap |
 
-**Server-side constants** are standard exports consumed by collectors and tools:
+**Server-side constants** are returned by the `serverLimits()` function. Unlike `browserLimits()` — which *must* be a function so it can be stringified into browser snippets — `serverLimits()` is a function purely for symmetry and grouping. Consumers destructure what they need at module load, e.g. `const { MAX_NETWORK_BUFFER } = serverLimits();`:
 
 | Constant | Default | What it controls |
 |----------|---------|-----------------|
@@ -355,7 +349,7 @@ The file is split into two sections:
 | `BREAKPOINT_SCOPE_MAX_PROPS` | 30 | Auto-fetched scope properties on breakpoint hit |
 | `STEP_TIMEOUT_MS` | 10000 | Timeout for step over/into/out re-pause |
 | `SOURCE_DEFAULT_LINE_WINDOW` | 200 | Default lines returned by `read_source` |
-| `SOURCE_SEARCH_MAX_SCRIPTS` | 50 | Max scripts searched per `search_source` call |
+| `SOURCE_SEARCH_MAX_SCRIPTS` | 100 | Max scripts searched per `search_source` call |
 | `SOURCE_SEARCH_MAX_RESULTS` | 100 | Max total matches from `search_source` |
 | `LOG_EXPRESSION_TRUNCATE` | 200 | Expression string truncation in log output |
 | `TREE_DEFAULT_MAX_DEPTH` | 4 | `get_component_tree` default max depth |
@@ -367,39 +361,53 @@ The file is split into two sections:
 
 ```
 src/
-├── index.mjs                  # Entry point
-├── limits.mjs                 # Centralized limits & tunables (single source of truth)
-├── cdp-client.mjs             # Lazy CDP connection + evaluate()
-├── logger.mjs                 # Dual-mode logging (MCP notifications + stderr)
+├── index.ts                   # Entry point
+├── env.ts                     # Parses all env vars once → typed ENV object
+├── limits.ts                  # Centralized limits & tunables (single source of truth)
+├── cdp-client.ts              # Lazy CDP connection (memoized) + evaluate()
+├── logger.ts                  # Dual-mode logging (MCP notifications + stderr)
+├── url-filters.ts             # Shared browser-internal URL-prefix filters
+├── types/
+│   ├── chrome-remote-interface.d.ts # Type shim (package ships no types)
+│   └── globals.d.ts           # Window augmentations for browser-side snippet globals
 ├── collectors/
-│   ├── network.mjs            # Captures API requests/responses (live + historical backfill)
+│   ├── network.ts             # Captures API requests/responses (live + historical backfill)
 │   └── debugger/              # CDP Debugger domain (split into sub-modules)
-│       ├── index.mjs          # Barrel: attach() + re-exports
-│       ├── state.mjs          # Shared mutable state (CDP client, script map, pause state)
-│       ├── scripts.mjs        # Script tracking, source map resolution, URL helpers
-│       ├── breakpoints.mjs    # Set/remove breakpoints and logpoints (source map fallback)
-│       ├── pause.mjs          # Wait, step, resume, scope inspection
-│       └── source-reading.mjs # Read and search bundled script source (parallel search)
+│       ├── index.ts           # Barrel: attach() + re-exports
+│       ├── state.ts           # Shared mutable state (CDP client, script map, pause state)
+│       ├── scripts.ts         # Script tracking, source map resolution, URL helpers
+│       ├── breakpoints.ts     # Set/remove breakpoints and logpoints (source map fallback)
+│       ├── pause.ts           # Wait, step, resume, scope inspection
+│       └── source-reading.ts  # Read and search bundled script source (parallel search)
 ├── tools/
-│   ├── react.mjs              # React component inspection (8 tools)
-│   ├── store.mjs              # State store reading (1 tool)
-│   ├── network.mjs            # Network response querying (1 tool)
-│   ├── debugger.mjs           # Breakpoints, source reading + logpoints (15 tools)
-│   └── general.mjs            # evaluate_in_page (1 tool)
-└── snippets/                  # JS code that runs inside the browser page
-    ├── index.mjs              # Barrel: bundles functions → CDP-ready strings
-    ├── bundle.mjs             # fn.toString() bundler utility
-    ├── helpers.mjs            # Shared helpers (fiber lookup, display name, hooks, …)
-    ├── page-info.mjs          # get_page_info snippet
-    ├── component-tree.mjs     # get_component_tree snippet
-    ├── component-path.mjs     # get_react_component_path snippet
-    ├── find-components.mjs    # find_react_component snippet
-    ├── inspect-by-name.mjs    # inspect_react_component_by_name snippet
-    ├── inspect-by-selector.mjs # inspect_react_component snippet
-    ├── inspect-context.mjs    # inspect_react_context snippet
-    ├── error-boundaries.mjs   # get_react_error_boundaries snippet
-    └── store-reader.mjs       # get_store_state snippet
+│   ├── react.ts               # React component inspection (8 tools)
+│   ├── store.ts               # State store reading (1 tool)
+│   ├── network.ts             # Network response querying (1 tool)
+│   ├── debugger.ts            # Breakpoints, source reading + logpoints (15 tools)
+│   └── general.ts             # evaluate_in_page (1 tool)
+└── snippets/                  # Browser-side code that runs inside the page
+    ├── index.ts               # Barrel: bundles functions → CDP-ready strings
+    ├── bundle.ts              # fn.toString() bundler utility
+    ├── helpers.ts             # Shared helpers (fiber lookup, display name, hooks, …)
+    ├── page-info.ts           # get_page_info snippet
+    ├── component-tree.ts      # get_component_tree snippet
+    ├── component-path.ts      # get_react_component_path snippet
+    ├── find-components.ts     # find_react_component snippet
+    ├── inspect-by-name.ts     # inspect_react_component_by_name snippet
+    ├── inspect-by-selector.ts # inspect_react_component snippet
+    ├── inspect-context.ts     # inspect_react_context snippet
+    ├── error-boundaries.ts    # get_react_error_boundaries snippet
+    └── store-reader.ts        # get_store_state snippet
 ```
+
+### TypeScript & the snippet bundler
+
+The `src/snippets/` functions (and `browserLimits()` in `src/limits.ts`) are
+serialized with `fn.toString()` and injected into the page via CDP. Because the
+project targets `ES2022` with no downleveling, transpilation strips type
+annotations without injecting runtime helpers — so `.toString()` always yields
+clean, standalone browser JS. When editing snippet code, keep it free of TS
+enums and reference only the helpers listed in each snippet's `deps` array.
 
 ## Logpoint Output Format
 

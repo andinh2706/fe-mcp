@@ -2,17 +2,26 @@
  * Shared helper functions for React fiber inspection.
  *
  * These functions execute INSIDE the browser page via CDP Runtime.evaluate.
- * They are written as normal JavaScript for full IDE support, linting, and
- * breakpoint debugging, then converted to strings by bundle.mjs.
+ * They are written as normal TypeScript for full IDE support, linting, and
+ * breakpoint debugging, then converted to strings by bundle.ts.
  *
- * All tuneable limits come from browserLimits() (defined in src/limits.mjs).
+ * Type annotations are erased at transpile time, so the `fn.toString()` output
+ * that gets injected into the page is clean, standalone JS. Fiber/DOM internals
+ * are typed `any` — they have no stable public shape.
+ *
+ * All tuneable limits come from browserLimits() (defined in src/limits.ts).
  * That function is self-contained so the bundler can stringify it alongside
- * these helpers.  See src/limits.mjs for the authoritative list of values.
+ * these helpers.  See src/limits.ts for the authoritative list of values.
  *
- * Dependency order matters for bundling — functions only reference helpers
- * defined earlier in this file:
+ * THE deps CONTRACT: because the browser has no module system, each snippet must
+ * pass bundle() the FULL TRANSITIVE closure of helpers it (indirectly) calls, in
+ * dependency order. The map below is the reference for that ordering — when a
+ * snippet uses e.g. buildFiberEntry, its `deps` array must also include
+ * getDisplayName/describeFn/classifyHook/extractHooks/safeProps/browserLimits.
  *
- *   browserLimits          (standalone — imported from ../limits.mjs)
+ * Dependency order (functions only reference helpers defined earlier):
+ *
+ *   browserLimits          (standalone — imported from ../limits.ts)
  *   getHookAccess          (standalone)
  *   findFiberByElement     (standalone)
  *   getFiberRoot           → getHookAccess, findFiberByElement
@@ -30,11 +39,10 @@
  *   buildFiberEntry        → getDisplayName, describeFn, classifyHook, extractHooks, safeProps
  */
 
-/* eslint-disable no-undef -- browser globals accessed via CDP evaluate */
-
 // Re-export browserLimits so snippets can include it in their deps array.
 // The function itself is self-contained (no imports) — safe for fn.toString().
-export { browserLimits } from '../limits.mjs';
+import { browserLimits } from '../limits.js';
+export { browserLimits };
 
 // ---------------------------------------------------------------------------
 // Fiber lookup
@@ -42,12 +50,11 @@ export { browserLimits } from '../limits.mjs';
 
 /**
  * Get the React DevTools hook if available.
- * @returns {{ rendererID: number, renderer: object, roots: FiberRoot[] } | null}
  */
 export function getHookAccess() {
   const hook = window.__REACT_DEVTOOLS_GLOBAL_HOOK__;
   if (!hook || !hook.renderers || hook.renderers.size === 0) return null;
-  const [rendererID, renderer] = Array.from(hook.renderers.entries())[0];
+  const [rendererID, renderer] = Array.from(hook.renderers.entries())[0] as [any, any];
   const roots = hook.getFiberRoots
     ? Array.from(hook.getFiberRoots(rendererID) || [])
     : [];
@@ -59,7 +66,7 @@ export function getHookAccess() {
  * Prefers the stable renderer.findFiberByHostInstance API,
  * falls back to __reactFiber$ / __reactInternalInstance$ properties.
  */
-export function findFiberByElement(el) {
+export function findFiberByElement(el: any) {
   if (!el) return null;
 
   // Preferred: DevTools hook renderer API (stable across React versions)
@@ -74,7 +81,7 @@ export function findFiberByElement(el) {
   }
 
   // Fallback: internal property on the DOM node
-  const key = Object.keys(el).find(k =>
+  const key = Object.keys(el).find((k) =>
     k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$')
   );
   return key ? el[key] : null;
@@ -84,10 +91,10 @@ export function findFiberByElement(el) {
  * Get the fiber root from DevTools hook or by DOM scanning.
  * Depends on: getHookAccess, findFiberByElement
  */
-export function getFiberRoot(selector) {
+export function getFiberRoot(selector?: string) {
   const hook = getHookAccess();
   if (hook && hook.roots.length > 0) {
-    return { root: hook.roots[0].current, source: 'devtools-hook' };
+    return { root: (hook.roots[0] as any).current, source: 'devtools-hook' };
   }
 
   const el = document.querySelector(selector || '#root')
@@ -110,7 +117,7 @@ export function getFiberRoot(selector) {
 /**
  * Resolve display name for any fiber, handling memo, forwardRef, lazy, Context.
  */
-export function getDisplayName(fiber) {
+export function getDisplayName(fiber: any): string | null {
   if (!fiber || !fiber.type) return null;
   const type = fiber.type;
   if (typeof type === 'string') return null;   // host element (div, span, …)
@@ -144,19 +151,18 @@ export function getDisplayName(fiber) {
  * Returns a plain JS value (safe for JSON.stringify) or a truncation marker.
  * Avoids JSON.parse(JSON.stringify(x)) which can freeze on large objects.
  *
- * @param {*}      val       — the value to serialize
- * @param {number} maxDepth  — how many levels deep to recurse (default 6)
- * @param {number} maxChars  — approximate char budget; once exceeded, bail (default 2000)
- * @returns {{ value: *, truncated: boolean }}
+ * @param val       — the value to serialize
+ * @param maxDepth  — how many levels deep to recurse (default 6)
+ * @param maxChars  — approximate char budget; once exceeded, bail (default 2000)
  */
-export function safeSerialize(val, maxDepth, maxChars) {
+export function safeSerialize(val: any, maxDepth?: number, maxChars?: number) {
   const L = browserLimits();
   if (maxDepth === undefined) maxDepth = L.SERIALIZE_MAX_DEPTH;
   if (maxChars === undefined) maxChars = L.SERIALIZE_MAX_CHARS;
   let budget = maxChars;
   const seen = new Set();
 
-  function walk(v, depth) {
+  function walk(v: any, depth: number): any {
     if (budget <= 0) return '[…truncated]';
     if (v === null || v === undefined) return v;
 
@@ -167,7 +173,7 @@ export function safeSerialize(val, maxDepth, maxChars) {
       return v.length > L.SERIALIZE_STRING_TRUNCATE ? v.slice(0, L.SERIALIZE_STRING_TRUNCATE) + '…' : v;
     }
     if (t === 'function' || t === 'symbol' || t === 'bigint') return '[' + t + ']';
-    if (depth > maxDepth) return '[…depth-limit]';
+    if (depth > maxDepth!) return '[…depth-limit]';
 
     // Circular reference guard
     if (seen.has(v)) return '[circular]';
@@ -175,7 +181,7 @@ export function safeSerialize(val, maxDepth, maxChars) {
 
     try {
       if (Array.isArray(v)) {
-        const out = [];
+        const out: any[] = [];
         const len = Math.min(v.length, L.SERIALIZE_MAX_ARRAY_ITEMS);
         for (let i = 0; i < len && budget > 0; i++) out.push(walk(v[i], depth + 1));
         if (v.length > L.SERIALIZE_MAX_ARRAY_ITEMS) out.push('[…' + (v.length - L.SERIALIZE_MAX_ARRAY_ITEMS) + ' more]');
@@ -183,7 +189,7 @@ export function safeSerialize(val, maxDepth, maxChars) {
       }
 
       const keys = Object.keys(v);
-      const out = {};
+      const out: any = {};
       const len = Math.min(keys.length, L.SERIALIZE_MAX_OBJECT_KEYS);
       for (let i = 0; i < len && budget > 0; i++) {
         const k = keys[i];
@@ -205,7 +211,7 @@ export function safeSerialize(val, maxDepth, maxChars) {
  * Describe a function value with name, body, and parameter count.
  * Used when showFunctionDetails is true in classifyHook / safeProps.
  */
-export function describeFn(fn) {
+export function describeFn(fn: any) {
   if (typeof fn !== 'function') return '[not-a-function]';
   const L = browserLimits();
   const body = fn.toString();
@@ -217,14 +223,24 @@ export function describeFn(fn) {
 }
 
 /**
- * Classify a single hook node (useState, useReducer, useEffect, useMemo, useRef, …).
- * @param {boolean} showFunctionDetails — if true, expand functions to {functionName, functionBody, paramCount}
+ * Classify a single hook node by inspecting its internal React shape.
+ *
+ * The checks are ORDER-SENSITIVE — most distinctive shape first:
+ *   1. a `queue`            → useState / useReducer
+ *   2. `{ current }` only   → useRef
+ *   3. `{ create, destroy }`→ useEffect / useLayoutEffect (tag & 4)
+ *   4. `[value, deps]`      → useMemo / useCallback
+ *   5. otherwise            → unknown
+ * These are React-internal heuristics; unrecognized shapes fall through to
+ * "unknown" rather than throwing.
+ *
+ * @param showFunctionDetails — if true, expand functions to {functionName, functionBody, paramCount}
  */
-export function classifyHook(hook, index, showFunctionDetails) {
+export function classifyHook(hook: any, index: number, showFunctionDetails: boolean): any {
   const ms = hook.memoizedState;
   const queue = hook.queue;
 
-  function serVal(v) {
+  function serVal(v: any) {
     if (typeof v === 'function') {
       return showFunctionDetails ? describeFn(v) : '[function]';
     }
@@ -248,7 +264,7 @@ export function classifyHook(hook, index, showFunctionDetails) {
   if (ms !== null && typeof ms === 'object' && 'create' in ms && 'destroy' in ms) {
     let effectType = 'useEffect';
     if (ms.tag & 4) effectType = 'useLayoutEffect';
-    const result = { index, type: effectType, deps: safeSerialize(ms.deps).value, hasCleanup: typeof ms.destroy === 'function' };
+    const result: any = { index, type: effectType, deps: safeSerialize(ms.deps).value, hasCleanup: typeof ms.destroy === 'function' };
     if (showFunctionDetails) {
       result.create = describeFn(ms.create);
       if (typeof ms.destroy === 'function') result.destroy = describeFn(ms.destroy);
@@ -270,10 +286,16 @@ export function classifyHook(hook, index, showFunctionDetails) {
 }
 
 /**
- * Extract all hooks from a fiber as a classified array.
+ * Extract all hooks from a fiber by walking its memoizedState linked list
+ * (capped at MAX_HOOKS_PER_FIBER), classifying each node.
+ *
+ * Only meaningful for FUNCTION components, whose memoizedState is the hook list.
+ * For CLASS components memoizedState is the state object (no `.next`), so this
+ * yields a single {type:'unknown'} entry — a known, harmless inaccuracy.
+ *
  * Depends on: describeFn, classifyHook
  */
-export function extractHooks(fiber, showFunctionDetails) {
+export function extractHooks(fiber: any, showFunctionDetails: boolean) {
   const L = browserLimits();
   const hooks = [];
   let hook = fiber.memoizedState;
@@ -288,12 +310,12 @@ export function extractHooks(fiber, showFunctionDetails) {
 
 /**
  * Serialize props safely with a per-value size cap.
- * @param {boolean} showFunctionDetails — if true, expand functions to {functionName, functionBody, paramCount}
+ * @param showFunctionDetails — if true, expand functions to {functionName, functionBody, paramCount}
  */
-export function safeProps(fiber, showFunctionDetails) {
+export function safeProps(fiber: any, showFunctionDetails: boolean) {
   const L = browserLimits();
   const raw = fiber.memoizedProps || {};
-  const result = {};
+  const result: any = {};
   const keys = Object.keys(raw);
 
   for (let i = 0; i < keys.length && i < L.PROPS_MAX_KEYS; i++) {
@@ -317,7 +339,7 @@ export function safeProps(fiber, showFunctionDetails) {
  * Walks up the DOM tree from the element, building a path of selectors.
  * Stops when it hits an element with an id or data-testid (scoping anchor).
  */
-export function fiberToSelector(fiber) {
+export function fiberToSelector(fiber: any): string | null {
   // Find the nearest host (DOM) fiber — guard against cycles
   let dom = fiber;
   const seen = new Set();
@@ -332,8 +354,8 @@ export function fiberToSelector(fiber) {
   if (!(el instanceof Element)) return null;
 
   // Walk up from el to a scoped anchor, collecting selector parts
-  const parts = [];
-  let cur = el;
+  const parts: string[] = [];
+  let cur: any = el;
   let steps = 0;
 
   while (cur && cur !== document.documentElement && steps < browserLimits().SELECTOR_MAX_DOM_STEPS) {
@@ -392,7 +414,7 @@ export function fiberToSelector(fiber) {
  * Returns { fiber, source: 'selector' } or { error: '...' }.
  * Depends on: findFiberByElement, getDisplayName
  */
-export function resolveComponentFiber(selector) {
+export function resolveComponentFiber(selector: string): any {
   const el = document.querySelector(selector);
   if (!el) return { error: 'Element not found: ' + selector };
 
@@ -411,7 +433,7 @@ export function resolveComponentFiber(selector) {
  * Returns { fiber, source } or { error: '...' }.
  * Depends on: getHookAccess, findFiberByElement, getFiberRoot
  */
-export function resolveRootFiber(rootSelector) {
+export function resolveRootFiber(rootSelector?: string): any {
   const result = getFiberRoot(rootSelector);
   if (!result.root) return { error: result.error || 'No React root' };
   return { fiber: result.root, source: result.source };
@@ -422,7 +444,7 @@ export function resolveRootFiber(rootSelector) {
  * Returns { fiber, source } or { error: '...' }.
  * Depends on: resolveComponentFiber, resolveRootFiber (+ their transitive deps)
  */
-export function resolveFiber(startSelector, rootSelector) {
+export function resolveFiber(startSelector?: string, rootSelector?: string): any {
   return startSelector
     ? resolveComponentFiber(startSelector)
     : resolveRootFiber(rootSelector);
@@ -433,8 +455,8 @@ export function resolveFiber(startSelector, rootSelector) {
  * Returns an array ordered root-first.
  * Depends on: getDisplayName
  */
-export function buildAncestorPath(fiber) {
-  const ancestors = [];
+export function buildAncestorPath(fiber: any) {
+  const ancestors: any[] = [];
   let cur = fiber.return;
   while (cur) {
     const name = getDisplayName(cur);
@@ -446,13 +468,12 @@ export function buildAncestorPath(fiber) {
 
 /**
  * Build a standard fiber entry object with component name, key, optional props/hooks.
- * @param {object}  fiber
- * @param {object}  opts  - { showProps?, showHooks?, showFunctionDetails? }
+ * @param opts  - { showProps?, showHooks?, showFunctionDetails? }
  * Depends on: getDisplayName, describeFn, classifyHook, extractHooks, safeProps
  */
-export function buildFiberEntry(fiber, opts) {
+export function buildFiberEntry(fiber: any, opts: any) {
   const name = getDisplayName(fiber);
-  const entry = { component: name || 'Unknown' };
+  const entry: any = { component: name || 'Unknown' };
   if (fiber.key) entry.key = fiber.key;
   if (opts && opts.showProps) entry.props = safeProps(fiber, opts.showFunctionDetails);
   if (opts && opts.showHooks) {

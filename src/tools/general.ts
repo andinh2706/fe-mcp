@@ -5,11 +5,14 @@
  */
 
 import { z } from "zod";
-import { evaluate } from "../cdp-client.mjs";
-import { log } from "../logger.mjs";
-import { LOG_EXPRESSION_TRUNCATE } from "../limits.mjs";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { evaluate } from "../cdp-client.js";
+import { log } from "../logger.js";
+import { serverLimits } from "../limits.js";
 
-export function register(server) {
+const { LOG_EXPRESSION_TRUNCATE } = serverLimits();
+
+export function register(server: McpServer) {
   server.tool(
     "evaluate_in_page",
     `Run a JavaScript expression in the browser page context and return the result.
@@ -32,7 +35,7 @@ The expression should return a JSON-serializable value.`,
           })()
         `);
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      } catch (err) {
+      } catch (err: any) {
         return { content: [{ type: "text", text: `Error evaluating: ${err.message}` }], isError: true };
       }
     }

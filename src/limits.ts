@@ -7,7 +7,7 @@
  * ARCHITECTURE NOTE — browser vs server constants
  * ────────────────────────────────────────────────
  * Code in  src/snippets/  runs INSIDE the browser page via CDP
- * Runtime.evaluate().  The bundler (bundle.mjs) converts functions to strings,
+ * Runtime.evaluate().  The bundler (bundle.ts) converts functions to strings,
  * so browser constants must live inside a self-contained function that can be
  * stringified and injected alongside the snippet.  That function is
  * `browserLimits()` below.
@@ -46,10 +46,8 @@
  * │ ERROR_BOUNDARY_MAX_DEPTH        │ 50     │ errorBoundaryChecker: max fiber tree depth        │
  * │ FIND_COMPONENTS_DEFAULT_MAX     │ 20     │ findComponents: default maxResults when omitted   │
  * └─────────────────────────────────┴────────┴──────────────────────────────────────────────────┘
- *
- * @returns {Record<string, number>}
  */
-export function browserLimits() {
+export function browserLimits(): Record<string, number> {
   return {
     // -- safeSerialize defaults -----------------------------------------------
     SERIALIZE_MAX_DEPTH:        6,     // max object nesting depth
@@ -84,60 +82,57 @@ export function browserLimits() {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SERVER-SIDE CONSTANTS  (imported directly by collectors and tools)
+// SERVER-SIDE CONSTANTS  (consumed by collectors and tools)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// -- Network collector -------------------------------------------------------
-
-/** Max request/response pairs kept in the in-memory ring buffer. */
-export const MAX_NETWORK_BUFFER = 500;
-
-/** Truncation length for non-JSON response bodies (chars). */
-export const NETWORK_BODY_TRUNCATE = 5000;
-
-// -- Debugger collector ------------------------------------------------------
-
 /**
- * Max scope properties to auto-fetch when a breakpoint is hit.
- * Applies to the top-frame scope snapshot returned with pause events.
+ * Returns all tunables used by the Node-side server code (collectors, tools,
+ * CDP client). Unlike browserLimits() — which MUST be a function so the bundler
+ * can stringify it into browser snippets — this is a function purely for
+ * symmetry and grouping: a single call site to review every server default.
+ *
+ * Consumers destructure what they need at module load, e.g.
+ *   const { MAX_NETWORK_BUFFER, NETWORK_BODY_TRUNCATE } = serverLimits();
+ *
+ * ┌──────────────────────────────┬────────┬──────────────────────────────────────────────────┐
+ * │ Key                          │ Value  │ What it controls                                 │
+ * ├──────────────────────────────┼────────┼──────────────────────────────────────────────────┤
+ * │ MAX_NETWORK_BUFFER           │ 500    │ Network collector in-memory ring buffer size      │
+ * │ NETWORK_BODY_TRUNCATE        │ 5000   │ Non-JSON response body truncation (chars)         │
+ * │ BREAKPOINT_SCOPE_MAX_PROPS   │ 30     │ Auto-fetched scope properties on breakpoint hit   │
+ * │ STEP_TIMEOUT_MS              │ 10000  │ Timeout for step over/into/out re-pause (ms)      │
+ * │ LOG_EXPRESSION_TRUNCATE      │ 200    │ Expression string truncation in log output        │
+ * │ SOURCE_DEFAULT_LINE_WINDOW   │ 200    │ Default lines returned by read_source             │
+ * │ SOURCE_SEARCH_MAX_SCRIPTS    │ 100    │ Max scripts searched per search_source call       │
+ * │ SOURCE_SEARCH_MAX_RESULTS    │ 100    │ Max total matches from search_source              │
+ * │ TREE_DEFAULT_MAX_DEPTH       │ 4      │ get_component_tree default max_depth              │
+ * │ FIND_DEFAULT_MAX_RESULTS     │ 20     │ find_react_component default max_results          │
+ * │ NETWORK_DEFAULT_LIMIT        │ 20     │ get_network_responses default limit               │
+ * │ BREAKPOINT_DEFAULT_TIMEOUT_S │ 60     │ wait_for_breakpoint default timeout (seconds)     │
+ * └──────────────────────────────┴────────┴──────────────────────────────────────────────────┘
  */
-export const BREAKPOINT_SCOPE_MAX_PROPS = 30;
+export function serverLimits() {
+  return {
+    // -- Network collector ----------------------------------------------------
+    MAX_NETWORK_BUFFER:           500,   // max request/response pairs in the ring buffer
+    NETWORK_BODY_TRUNCATE:        5000,  // truncation length for non-JSON response bodies
 
-/**
- * Timeout (ms) used by step_over / step_into / step_out when waiting
- * for the engine to re-pause after a single step.
- */
-export const STEP_TIMEOUT_MS = 10_000;
+    // -- Debugger collector ---------------------------------------------------
+    BREAKPOINT_SCOPE_MAX_PROPS:   30,    // scope properties auto-fetched on breakpoint hit
+    STEP_TIMEOUT_MS:              10_000, // step over/into/out re-pause timeout (ms)
 
-// -- Logging -----------------------------------------------------------------
+    // -- Logging --------------------------------------------------------------
+    LOG_EXPRESSION_TRUNCATE:      200,   // CDP expression truncation in log output
 
-/**
- * When logging CDP expressions (evaluate, evaluate_at_breakpoint),
- * truncate the expression string to this many chars for readability.
- */
-export const LOG_EXPRESSION_TRUNCATE = 200;
+    // -- Source reading (supplementary — agent reads filesystem first) --------
+    SOURCE_DEFAULT_LINE_WINDOW:   200,   // default line window for read_source
+    SOURCE_SEARCH_MAX_SCRIPTS:    100,   // max scripts searched per search_source call
+    SOURCE_SEARCH_MAX_RESULTS:    100,   // max total matches returned across all scripts
 
-// -- Source reading (supplementary — agent reads filesystem first) -----------
-
-/** Default line window when read_source is called without a range. */
-export const SOURCE_DEFAULT_LINE_WINDOW = 200;
-
-/** Max scripts to search across in a single search_source call. */
-export const SOURCE_SEARCH_MAX_SCRIPTS = 100;
-
-/** Max total search matches returned across all scripts. */
-export const SOURCE_SEARCH_MAX_RESULTS = 100;
-
-// -- Tool-level defaults (user-facing, used in zod schemas & destructuring) --
-
-/** Default max_depth for get_component_tree tool. */
-export const TREE_DEFAULT_MAX_DEPTH = 4;
-
-/** Default max_results for find_react_component tool. */
-export const FIND_DEFAULT_MAX_RESULTS = 20;
-
-/** Default limit for get_network_responses tool. */
-export const NETWORK_DEFAULT_LIMIT = 20;
-
-/** Default timeout (seconds) for wait_for_breakpoint tool. */
-export const BREAKPOINT_DEFAULT_TIMEOUT_S = 60;
+    // -- Tool-level defaults (used in zod schemas & destructuring) ------------
+    TREE_DEFAULT_MAX_DEPTH:       4,     // get_component_tree default max_depth
+    FIND_DEFAULT_MAX_RESULTS:     20,    // find_react_component default max_results
+    NETWORK_DEFAULT_LIMIT:        20,    // get_network_responses default limit
+    BREAKPOINT_DEFAULT_TIMEOUT_S: 60,    // wait_for_breakpoint default timeout (seconds)
+  };
+}

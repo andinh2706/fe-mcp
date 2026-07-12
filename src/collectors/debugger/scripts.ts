@@ -5,19 +5,24 @@
  * and mapping original source locations to generated (bundled) locations.
  */
 
-import { log } from "../../logger.mjs";
+import { log } from "../../logger.js";
 import { SourceMapConsumer } from "source-map-js";
-import { scripts, scriptIdToUrl, sourceMapCache, requireCdp } from "./state.mjs";
+import { scripts, scriptIdToUrl, sourceMapCache } from "./state.js";
 
 // ---------------------------------------------------------------------------
 // Script tracking (called from attach)
 // ---------------------------------------------------------------------------
 
 /**
- * Handle a Debugger.scriptParsed event.
- * Updates the URL-keyed script map, clearing stale entries.
+ * Handle a Debugger.scriptParsed event by recording the script in the URL-keyed
+ * map (plus the scriptId→url reverse map).
+ *
+ * On a page reload the same URL reappears with a NEW scriptId; when that
+ * happens we evict the previous scriptId's reverse-map entry and its cached
+ * source map, so lookups always resolve to the currently-loaded script.
+ * (Anonymous eval scripts with no url are ignored.)
  */
-export function onScriptParsed(params) {
+export function onScriptParsed(params: any): void {
   if (!params.url) return;
 
   const existing = scripts.get(params.url);
@@ -42,7 +47,7 @@ export function onScriptParsed(params) {
  * Returns bundled script URLs as they appear in the browser, not original
  * source file names.
  */
-export function listScripts(urlFilter) {
+export function listScripts(urlFilter?: string) {
   let results = Array.from(scripts.entries()).map(([url, info]) => ({
     scriptId: info.scriptId,
     url,
@@ -51,19 +56,21 @@ export function listScripts(urlFilter) {
 
   if (urlFilter) {
     const lower = urlFilter.toLowerCase();
-    results = results.filter(s => s.url.toLowerCase().includes(lower));
+    results = results.filter((s) => s.url.toLowerCase().includes(lower));
   }
 
   return results;
 }
 
 /**
- * Find a script by URL pattern (substring match against bundled script URLs).
- * Prefers exact filename matches over partial path matches.
+ * Find the single best script matching a URL pattern (substring match).
+ * Preference order: an exact filename match wins immediately; otherwise the
+ * shortest matching URL is kept (shortest ≈ least-nested / most-specific),
+ * which avoids returning a deep vendor path when a top-level bundle also matches.
  */
-export function findScriptByPattern(pattern) {
+export function findScriptByPattern(pattern: string) {
   const lower = pattern.toLowerCase();
-  let best = null;
+  let best: { scriptId: string; url: string; hasSourceMap: boolean } | null = null;
 
   for (const [url, info] of scripts) {
     if (!url.toLowerCase().includes(lower)) continue;
@@ -74,11 +81,13 @@ export function findScriptByPattern(pattern) {
       hasSourceMap: !!info.sourceMapURL,
     };
 
-    const filename = url.split("/").pop().toLowerCase();
+    // Exact filename hit — can't do better, return now.
+    const filename = (url.split("/").pop() || "").toLowerCase();
     if (filename === lower || filename === lower.replace(/\//g, "")) {
       return candidate;
     }
 
+    // Otherwise keep the shortest matching URL seen so far.
     if (!best || url.length < best.url.length) {
       best = candidate;
     }
@@ -94,7 +103,7 @@ export function findScriptByPattern(pattern) {
 /**
  * Convert a CDP breakpoint location to our standard entry format.
  */
-export function locToEntry(loc) {
+export function locToEntry(loc: any) {
   return {
     scriptId: loc.scriptId,
     url: scriptIdToUrl.get(loc.scriptId) || "unknown",
@@ -106,7 +115,7 @@ export function locToEntry(loc) {
 /**
  * Escape a user-friendly file pattern into a regex for CDP setBreakpointByUrl.
  */
-export function urlPatternToRegex(pattern) {
+export function urlPatternToRegex(pattern: string): string {
   return pattern
     .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
     .replace(/\*/g, ".*");
@@ -120,19 +129,20 @@ export function urlPatternToRegex(pattern) {
  * Resolve an original source file (e.g. "MultipleNestedForms.tsx") to a
  * generated location in a loaded bundled script, by parsing source maps.
  *
- * @param {string} originalPattern — filename or path fragment (original source)
- * @param {number} line — 1-based line in the original source
- * @param {number} column — 1-based column in the original source
- * @returns {{ scriptId, scriptUrl, generatedLine, generatedColumn, originalSource } | null}
+ * @param originalPattern — filename or path fragment (original source)
+ * @param line — 1-based line in the original source
+ * @param column — 1-based column in the original source
  */
-export async function resolveViaSourceMap(originalPattern, line, column) {
+export async function resolveViaSourceMap(originalPattern: string, line: number, column?: number) {
+  // Scan every source-mapped bundle; the first whose map contains a matching
+  // original source (and yields a generated position) wins.
   for (const [scriptUrl, info] of scripts) {
     if (!info.sourceMapURL) continue;
 
     let cached;
     try {
       cached = await getSourceMapConsumer(scriptUrl, info.sourceMapURL);
-    } catch (err) {
+    } catch (err: any) {
       log.debug("source map fetch failed", { scriptUrl, error: err.message });
       continue;
     }
@@ -169,7 +179,7 @@ export async function resolveViaSourceMap(originalPattern, line, column) {
  * Get or create a cached SourceMapConsumer for a script.
  * Fetches the source map via HTTP from the dev server.
  */
-async function getSourceMapConsumer(scriptUrl, sourceMapURL) {
+async function getSourceMapConsumer(scriptUrl: string, sourceMapURL: string) {
   if (sourceMapCache.has(scriptUrl)) {
     return sourceMapCache.get(scriptUrl);
   }
@@ -191,13 +201,13 @@ async function getSourceMapConsumer(scriptUrl, sourceMapURL) {
     // The consumer resolves relative path segments (e.g. ../../../../common-ui/...)
     // to absolute paths (e.g. common-ui/...). We must match against the same
     // normalized names that generatedPositionFor() expects.
-    sources: new Set(consumer.sources || []),
+    sources: new Set<string>(consumer.sources || []),
   };
   sourceMapCache.set(scriptUrl, cached);
   return cached;
 }
 
-function resolveSourceMapUrl(scriptUrl, sourceMapURL) {
+function resolveSourceMapUrl(scriptUrl: string, sourceMapURL: string): string {
   if (sourceMapURL.startsWith("data:")) return sourceMapURL;
   if (sourceMapURL.startsWith("http://") || sourceMapURL.startsWith("https://")) return sourceMapURL;
   const base = scriptUrl.substring(0, scriptUrl.lastIndexOf("/") + 1);
@@ -208,11 +218,11 @@ function resolveSourceMapUrl(scriptUrl, sourceMapURL) {
  * Find the source entry in a source map that best matches a pattern.
  * (e.g. "MultipleNestedForms.tsx" matching "webpack://common-ui/.../MultipleNestedForms.tsx")
  */
-function findMatchingSource(sources, pattern) {
+function findMatchingSource(sources: Set<string>, pattern: string): string | null {
   const lower = pattern.toLowerCase();
 
   for (const src of sources) {
-    const filename = src.split("/").pop().toLowerCase();
+    const filename = (src.split("/").pop() || "").toLowerCase();
     if (filename === lower) return src;
   }
 

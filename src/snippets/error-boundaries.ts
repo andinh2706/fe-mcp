@@ -5,15 +5,13 @@
  * Depends on: getHookAccess, findFiberByElement, getFiberRoot, getDisplayName
  */
 
-/* eslint-disable no-undef -- browser globals + helpers injected by bundle */
-
 import {
   getHookAccess, findFiberByElement, getFiberRoot, getDisplayName,
   resolveRootFiber, browserLimits,
-} from './helpers.mjs';
+} from './helpers.js';
 
 export function errorBoundaryChecker() {
-  const errors = [];
+  const errors: any[] = [];
 
   const overlay = document.querySelector('#webpack-dev-server-client-overlay');
   if (overlay) errors.push({ type: 'dev-overlay', visible: true });
@@ -21,7 +19,7 @@ export function errorBoundaryChecker() {
   const resolved = resolveRootFiber();
   if (resolved.error) return { errors, message: resolved.error };
 
-  function walk(node, depth) {
+  function walk(node: any, depth: number) {
     if (!node || depth > browserLimits().ERROR_BOUNDARY_MAX_DEPTH) return;
 
     // Class component with getDerivedStateFromError

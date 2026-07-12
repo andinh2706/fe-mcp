@@ -4,18 +4,16 @@
  * Depends on: findFiberByElement
  */
 
-/* eslint-disable no-undef -- browser globals + helpers injected by bundle */
+import { findFiberByElement, browserLimits, safeSerialize } from './helpers.js';
 
-import { findFiberByElement, browserLimits, safeSerialize } from './helpers.mjs';
-
-export function inspectContext(selector) {
+export function inspectContext(selector: string) {
   const el = document.querySelector(selector);
   if (!el) return { error: 'Element not found: ' + selector };
 
   const fiber = findFiberByElement(el);
   if (!fiber) return { error: 'No React fiber found' };
 
-  const contexts = [];
+  const contexts: any[] = [];
   let cur = fiber;
   while (cur) {
     const type = cur.type;

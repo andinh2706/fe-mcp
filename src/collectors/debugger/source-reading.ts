@@ -7,10 +7,19 @@
  * searchSource runs searches in parallel across scripts for better performance.
  */
 
-import { log } from "../../logger.mjs";
-import { SOURCE_DEFAULT_LINE_WINDOW, SOURCE_SEARCH_MAX_SCRIPTS, SOURCE_SEARCH_MAX_RESULTS } from "../../limits.mjs";
-import { requireCdp, scripts } from "./state.mjs";
-import { findScriptByPattern, listScripts } from "./scripts.mjs";
+import { serverLimits } from "../../limits.js";
+import { INTERNAL_URL_PREFIXES, startsWithAny } from "../../url-filters.js";
+import { requireCdp, scripts } from "./state.js";
+import { findScriptByPattern, listScripts } from "./scripts.js";
+
+const { SOURCE_DEFAULT_LINE_WINDOW, SOURCE_SEARCH_MAX_SCRIPTS, SOURCE_SEARCH_MAX_RESULTS } = serverLimits();
+
+/**
+ * Scripts to exclude from search — the shared browser-internal core plus the
+ * legacy `extensions::` scheme. (This also skips `chrome://` scripts, which are
+ * browser-internal and never application source.)
+ */
+const IGNORE_SCRIPT_PREFIXES = [...INTERNAL_URL_PREFIXES, "extensions::"];
 
 /**
  * Read the source code of a loaded bundled script by URL pattern.
@@ -18,7 +27,7 @@ import { findScriptByPattern, listScripts } from "./scripts.mjs";
  * original source. Useful for inspecting vendor code or verifying
  * what the browser is actually executing.
  */
-export async function getSource(urlPattern, startLine, endLine) {
+export async function getSource(urlPattern: string, startLine?: number, endLine?: number): Promise<any> {
   const cdp = requireCdp();
 
   const match = findScriptByPattern(urlPattern);
@@ -27,7 +36,7 @@ export async function getSource(urlPattern, startLine, endLine) {
     return {
       error: `No bundled script found matching "${urlPattern}"`,
       suggestion: available.length > 0
-        ? "Partial matches: " + available.slice(0, 5).map(s => s.url).join(", ")
+        ? "Partial matches: " + available.slice(0, 5).map((s) => s.url).join(", ")
         : "Use list_scripts to see loaded bundled scripts.",
     };
   }
@@ -42,7 +51,7 @@ export async function getSource(urlPattern, startLine, endLine) {
   const lines = allLines.slice(from, to);
 
   const padWidth = String(to).length;
-  const numbered = lines.map((line, i) => {
+  const numbered = lines.map((line: string, i: number) => {
     const num = String(from + i + 1).padStart(padWidth, " ");
     return `${num} │ ${line}`;
   });
@@ -64,7 +73,7 @@ export async function getSource(urlPattern, startLine, endLine) {
  * Searches are dispatched concurrently via Promise.allSettled, then
  * results are gathered and capped.
  */
-export async function searchSource(query, urlFilter, isRegex, caseSensitive) {
+export async function searchSource(query: string, urlFilter?: string, isRegex?: boolean, caseSensitive?: boolean): Promise<any> {
   const cdp = requireCdp();
 
   let targets = Array.from(scripts.entries()).map(([url, info]) => ({
@@ -72,16 +81,11 @@ export async function searchSource(query, urlFilter, isRegex, caseSensitive) {
     url,
   }));
 
-  targets = targets.filter(s =>
-    s.url &&
-    !s.url.startsWith("chrome-extension://") &&
-    !s.url.startsWith("devtools://") &&
-    !s.url.startsWith("extensions::")
-  );
+  targets = targets.filter((s) => s.url && !startsWithAny(s.url, IGNORE_SCRIPT_PREFIXES));
 
   if (urlFilter) {
     const lower = urlFilter.toLowerCase();
-    targets = targets.filter(s => s.url.toLowerCase().includes(lower));
+    targets = targets.filter((s) => s.url.toLowerCase().includes(lower));
   }
 
   if (targets.length > SOURCE_SEARCH_MAX_SCRIPTS) {
@@ -89,15 +93,15 @@ export async function searchSource(query, urlFilter, isRegex, caseSensitive) {
   }
 
   // Search all scripts in parallel
-  const searchPromises = targets.map(script =>
+  const searchPromises = targets.map((script) =>
     cdp.Debugger.searchInContent({
       scriptId: script.scriptId,
       query,
       isRegex: isRegex || false,
       caseSensitive: caseSensitive !== undefined ? caseSensitive : false,
     })
-      .then(({ result: matches }) =>
-        matches.map(m => ({
+      .then(({ result: matches }: any) =>
+        matches.map((m: any) => ({
           url: script.url,
           line: m.lineNumber + 1,
           content: m.lineContent.trim(),
@@ -109,7 +113,7 @@ export async function searchSource(query, urlFilter, isRegex, caseSensitive) {
   const settled = await Promise.all(searchPromises);
 
   // Flatten and cap
-  const results = [];
+  const results: any[] = [];
   for (const matches of settled) {
     for (const match of matches) {
       if (results.length >= SOURCE_SEARCH_MAX_RESULTS) break;
