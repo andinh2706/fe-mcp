@@ -79,7 +79,10 @@ const server = new McpServer(
   },
 );
 
-// Enable MCP logging notifications (in addition to stderr)
+// Enable MCP logging notifications (in addition to stderr), and — when
+// LOG_TOOL_RESULTS is set — instrument the server so every tool call also logs
+// its outcome. Both live in logger.ts; this MUST stay above the register*()
+// calls below, since the instrumentation wraps the tool() they call.
 log.setServer(server);
 
 // Register all tools by concern. Each register() attaches its tools to the

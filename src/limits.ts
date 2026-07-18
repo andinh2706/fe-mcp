@@ -123,6 +123,7 @@ export function serverLimits() {
 
     // -- Logging --------------------------------------------------------------
     LOG_EXPRESSION_TRUNCATE:      200,   // CDP expression truncation in log output
+    TOOL_RESULT_PREVIEW:          800,   // chars of each tool's result logged on completion
 
     // -- Source reading (supplementary — agent reads filesystem first) --------
     SOURCE_DEFAULT_LINE_WINDOW:   200,   // default line window for read_source

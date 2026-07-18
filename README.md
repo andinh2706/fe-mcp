@@ -36,7 +36,16 @@ The component-inspection tools — `get_component_tree`, `get_react_component_pa
 | `get_store_state(path?)` | Read Redux/Zustand state with dot-path |
 | `get_network_responses(url_pattern?)` | API requests — live ones include full bodies, historical ones (before MCP connected) include URL/status/timing |
 
-`get_store_state` reads a store you expose on `window` (`__REDUX_STORE__`, `__ZUSTAND_STORE__`, or `__STORE__`). In development, drop [`react-debug-helper.ts`](react-debug-helper.ts) into your app's entry point and call `exposeStore(store, 'redux' | 'zustand')`, or set the global yourself. Without it, `get_store_state` reports `{ store: 'none' }`.
+**Seeing `forwardRef(Anonymous)` in the component tree?** The name genuinely doesn't exist at runtime — not a bug in this server (React DevTools shows the same). `forwardRef()` returns an exotic *object*, and a library that writes `export const MdcButton = forwardRef((props, ref) => …)` sets neither `displayName` nor `render.name` (JS infers a function's `.name` only on assignment, never in call-argument position), so React has no name to report. Fix it by copying the export names onto `displayName` in dev:
+
+```js
+import * as Ids from 'ids-wc/dist/react/components';
+import { nameLibraryComponents } from './react-debug-helper';
+
+nameLibraryComponents(Ids);   // forwardRef(Anonymous) → MdcButton, MdcGrid, …
+```
+
+`get_store_state` is the other tool that needs cooperation from your app: a store is a closure variable with no DOM presence, so it can only be read if you park it on a `window` global (`__REDUX_STORE__`, `__ZUSTAND_STORE__`, or `__STORE__`). Either set the global yourself, or **copy** [`react-debug-helper.ts`](react-debug-helper.ts) into your app's source tree and call `exposeStore(store, 'redux' | 'zustand')` where you create the store — it no-ops outside development. Whatever you expose must have a `.getState()` method (for Zustand that means the hook itself, not `useStore()`). Without this, `get_store_state` reports `{ store: 'none' }`.
 
 ### Source inspection (bundled scripts, no pause)
 
@@ -181,6 +190,23 @@ The server is written in TypeScript and runs directly via [`tsx`](https://github
 | `yarn start:inspect:debug` | MCP Inspector **and** the Node inspector on `:9229` |
 | `yarn typecheck` | `tsc --noEmit` (type-check only; nothing is emitted) |
 
+### Install it as a command (recommended for agent configs)
+
+So your agent's MCP config doesn't need an absolute path to `src/index.ts`, install the
+package so it exposes a `react-debug-mcp` binary:
+
+```bash
+npm i -g .        # or: npm link
+```
+
+Now `react-debug-mcp` is on your `PATH` and can be launched from anywhere. The `bin/cli.mjs`
+shim registers `tsx`'s loader in-process and imports the TypeScript entry point, so this
+still requires **no build step and no `dist/`** — it is the same code path as `yarn start`.
+
+> The binary does **not** read `.env` (unlike the `start*` scripts). A global command runs in
+> *your app's* directory, where a `.env` belongs to your app, not to this server. Pass config
+> through the MCP client's `environment` block instead.
+
 ### OpenCode config
 
 Add to your project's `opencode.jsonc`:
@@ -191,7 +217,7 @@ Add to your project's `opencode.jsonc`:
   "mcp": {
     "react-debug": {
       "type": "local",
-      "command": ["npx", "tsx", "/path/to/react-debug-mcp/src/index.ts"],
+      "command": ["react-debug-mcp"],
       "environment": {
         "CDP_PORT": "9222",
         "CDP_TARGET_URL": "localhost:3000"
@@ -207,6 +233,13 @@ Add to your project's `opencode.jsonc`:
 }
 ```
 
+If you skipped the global install, the fallback is the explicit path — it works, but you have
+to keep it correct on every machine:
+
+```jsonc
+"command": ["npx", "tsx", "/path/to/react-debug-mcp/src/index.ts"]
+```
+
 ### What happens at runtime when you start OpenCode
 
 ```
@@ -214,7 +247,7 @@ Add to your project's `opencode.jsonc`:
 
 2. OpenCode reads opencode.jsonc, finds the "react-debug" MCP config.
 
-3. OpenCode spawns:  npx tsx /path/to/react-debug-mcp/src/index.ts
+3. OpenCode spawns:  react-debug-mcp
    with CDP_PORT=9222 and CDP_TARGET_URL=localhost:3000 in the env.
    The process's stdin/stdout become the JSON-RPC transport.
 
@@ -242,10 +275,11 @@ Add to your project's `opencode.jsonc`:
    → Server evaluates the snippet in the browser, returns result.
    (If eager connect failed, this tool call triggers the retry.)
 
-8. Throughout, the server sends log events:
+8. Throughout, the server sends log events. `data` is a structured object
+   (not a flattened string), so clients render it as expandable JSON:
    → { method: "notifications/message",
        params: { level: "info", logger: "react-debug-mcp",
-                 data: "connected {\"pageUrl\":\"http://localhost:3000\"}" } }
+                 data: { msg: "connected", pageUrl: "http://localhost:3000" } } }
 
    These appear in OpenCode's log output and in the MCP Inspector
    logging panel (if running under the Inspector).
@@ -271,6 +305,32 @@ npx @modelcontextprotocol/inspector -e CDP_TARGET_URL=localhost:3000 \
   node --env-file-if-exists=.env --import tsx src/index.ts
 ```
 
+#### ⚠️ The Inspector cannot observe your agent's session
+
+A natural assumption is: *"point the Inspector at the server my agent is already
+talking to, and watch what the agent does."* **That is not possible** — not over
+stdio, and not over HTTP either. Don't build a workflow around it.
+
+**MCP has no observer role.** It's point-to-point JSON-RPC: a client only ever sees
+its own traffic. There is no subscribe-to-another-session mechanism, by design — tool
+arguments and results routinely carry credentials, source and user data, so a
+cross-session channel would be an exfiltration channel enabled by default.
+
+| Transport | Why it still doesn't work |
+|-----------|---------------------------|
+| **stdio** (this server) | The client *spawns* the server and owns its stdin/stdout. Your agent spawns **process A**; the Inspector spawns its **own process B**. Two clients = two independent server processes. There is no listening socket to attach to. |
+| **HTTP** (hypothetical) | Switching transports does **not** fix it. The Inspector would open its **own session** against the same server and still render only its own request/response traffic. At best the server could *broadcast* activity as log notifications — a text feed in the log pane, not the agent's calls as structured request/response. |
+
+So the Inspector is for **hands-on probing** — you drive the tools yourself, in a
+separate session, against the same Chrome. That's genuinely useful, and it's what
+`start:inspect` is for. It is not a window into the agent.
+
+**The stop-gap:** to see what the *agent* did, use the server's own logs. The server
+is the one place where the agent's calls are visible, so observation happens there —
+set `LOG_TOOL_RESULTS=1` and `LOG_FILE`, then tail the file. You get every tool the
+agent invoked, its arguments, and what came back. See
+[Watching an agent session](#watching-an-agent-session) below.
+
 ### Logging
 
 The server uses dual-mode logging:
@@ -284,6 +344,41 @@ The server uses dual-mode logging:
 Startup messages (before the MCP transport connects) only go to stderr.
 Once connected, every log call goes to both channels.
 
+#### Watching an agent session
+
+Tools always log their **invocation** (name + arguments). Set `LOG_TOOL_RESULTS=1`
+and they also log their **outcome** — a `tool done` line with duration, success flag,
+result size and a result preview (`tool threw` if the handler threw). Together with
+`LOG_FILE`, that makes the log a complete trace of what an agent did *and got back*:
+
+```bash
+LOG_FILE=./agent.log LOG_TOOL_RESULTS=1 yarn start   # then, in another terminal:
+tail -f agent.log
+```
+
+```json
+{"level":"info","msg":"tool done","data":{"tool":"list_breakpoints","ms":1,"ok":true,"chars":35,"preview":"No active breakpoints or logpoints."}}
+{"level":"info","msg":"tool done","data":{"tool":"get_page_info","ms":2,"ok":false,"chars":143,"preview":"Error: Cannot connect to Chrome on 127.0.0.1:1 …"}}
+```
+
+Outcome logging is wired once in `src/logger.ts` (`log.setServer()` wraps `server.tool`),
+so it covers all 26 tools uniformly — including ones whose handlers never logged
+themselves. It's **off by default**: it's noisy, and results can carry page data
+(tokens, store state, response bodies). Enlarge `TOOL_RESULT_PREVIEW` in `src/limits.ts`
+to log more of each result.
+
+**You may not even need the file.** Every log line is *also* sent to the connected
+MCP client as a `notifications/message`, with `data` as a structured object. So with
+`LOG_TOOL_RESULTS=1`, the agent's own client (e.g. OpenCode) already receives the
+trace and renders it as expandable JSON in its MCP log panel — check there before
+reaching for `tail`. (These are protocol-level notifications; they don't enter the
+model's context.)
+
+> **Why the log, and not the Inspector?** Because the Inspector *cannot* see an
+> agent's session — MCP has no observer role, and HTTP wouldn't change that. See
+> [the warning under MCP Inspector](#mcp-inspector). The server's own log is the
+> only place the agent's calls are visible, which is why observation lives here.
+
 ### Environment Variables
 
 | Var | Default | Description |
@@ -293,8 +388,9 @@ Once connected, every log call goes to both channels.
 | `CDP_TARGET_URL` | _(none)_ | URL substring to match a specific tab |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` — controls stderr output |
 | `LOG_FILE` | _(none)_ | Path to write logs |
+| `LOG_TOOL_RESULTS` | `false` | `1` to also log each tool call's outcome — see [Watching an agent session](#watching-an-agent-session) |
 
-All five are parsed once in `src/env.ts` and exposed as a typed `ENV` object.
+All of them are parsed once in `src/env.ts` and exposed as a typed `ENV` object.
 
 > **Use `127.0.0.1`, not `localhost`.** Chrome's `--remote-debugging-port` binds to
 > the IPv4 loopback (`127.0.0.1`) only. On many systems — notably Windows with
@@ -352,6 +448,7 @@ The file is split into two sections:
 | `SOURCE_SEARCH_MAX_SCRIPTS` | 100 | Max scripts searched per `search_source` call |
 | `SOURCE_SEARCH_MAX_RESULTS` | 100 | Max total matches from `search_source` |
 | `LOG_EXPRESSION_TRUNCATE` | 200 | Expression string truncation in log output |
+| `TOOL_RESULT_PREVIEW` | 800 | Chars of each tool's result logged on completion |
 | `TREE_DEFAULT_MAX_DEPTH` | 4 | `get_component_tree` default max depth |
 | `FIND_DEFAULT_MAX_RESULTS` | 20 | `find_react_component` default max results |
 | `NETWORK_DEFAULT_LIMIT` | 20 | `get_network_responses` default limit |
@@ -360,6 +457,9 @@ The file is split into two sections:
 ## Project Structure
 
 ```
+bin/
+└── cli.mjs                    # `react-debug-mcp` executable: registers tsx, imports src/index.ts
+
 src/
 ├── index.ts                   # Entry point
 ├── env.ts                     # Parses all env vars once → typed ENV object
@@ -403,11 +503,30 @@ src/
 ### TypeScript & the snippet bundler
 
 The `src/snippets/` functions (and `browserLimits()` in `src/limits.ts`) are
-serialized with `fn.toString()` and injected into the page via CDP. Because the
-project targets `ES2022` with no downleveling, transpilation strips type
-annotations without injecting runtime helpers — so `.toString()` always yields
-clean, standalone browser JS. When editing snippet code, keep it free of TS
-enums and reference only the helpers listed in each snippet's `deps` array.
+serialized with `fn.toString()` and injected into the page via CDP. Targeting
+`ES2022` means no downleveling, so type annotations are stripped without
+`__awaiter`-style helpers being injected into the function bodies.
+
+**But "no injected helpers" is not quite true, and the exception bites.** tsx
+hard-codes esbuild's `keepNames: true`, which preserves `fn.name` by rewriting
+every *named nested function* into a `__name(fn, "fn")` call — and emitting the
+`__name` helper at **module scope**. Module scope does not survive `fn.toString()`,
+so the surviving call reaches the page undefined:
+
+```
+Uncaught ReferenceError: __name is not defined
+    at componentTree (<anonymous>:16:838)
+```
+
+`bundle()` therefore ships esbuild's own `__name` definition inside every bundle,
+and **throws at import time** if esbuild ever injects a helper it doesn't provide —
+turning a future browser-side `ReferenceError` into a server that refuses to start.
+If you see that error, add the missing definition to `ESBUILD_HELPERS` in
+[`src/snippets/bundle.ts`](src/snippets/bundle.ts).
+
+When editing snippet code: keep it free of TS enums, and reference only the helpers
+listed in each snippet's `deps` array (a missing dep parses fine and only fails as a
+`ReferenceError` when the snippet actually runs in the page).
 
 ## Logpoint Output Format
 

@@ -3,9 +3,17 @@
   "version": "1.0.0",
   "description": "MCP server with high-level React-specific debugging tools for AI agents.",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "bin/cli.mjs",
   "bin": {
-    "react-debug-mcp": "src/index.ts"
+    "react-debug-mcp": "bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "tsconfig.json"
+  ],
+  "engines": {
+    "node": ">=20.18"
   },
   "scripts": {
     "start": "node --env-file-if-exists=.env --import tsx src/index.ts",
@@ -18,12 +26,12 @@
     "@modelcontextprotocol/sdk": "^1.12.1",
     "chrome-remote-interface": "^0.33.2",
     "source-map-js": "^1.2.1",
+    "tsx": "^4.23.0",
     "zod": "^3.25.67"
   },
   "devDependencies": {
     "@modelcontextprotocol/inspector": "*",
     "@types/node": "^26.1.1",
-    "tsx": "^4.23.0",
     "typescript": "^7.0.2"
   },
   "resolutions": {

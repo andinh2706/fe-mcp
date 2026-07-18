@@ -11,10 +11,11 @@
  * │ Variable         │ ENV field    │ Default   │ Purpose                                        │
  * ├──────────────────┼──────────────┼───────────┼──────────────────────────────────────────────┤
  * │ CDP_HOST         │ CDP_HOST     │ 127.0.0.1 │ Host of Chrome's remote-debugging endpoint     │
- * │ CDP_PORT         │ CDP_PORT     │ 9222      │ Port of that endpoint (--remote-debugging-port)│
+ * │ CDP_PORT         │ CDP_PORT     │ 9999      │ Port of that endpoint (--remote-debugging-port)│
  * │ CDP_TARGET_URL   │ CDP_TARGET_URL│ null     │ URL substring to pick which tab to attach to   │
  * │ LOG_LEVEL        │ LOG_LEVEL    │ info      │ stderr log verbosity (debug/info/warn/error)   │
  * │ LOG_FILE         │ LOG_FILE     │ null      │ Optional path to also append logs to           │
+ * │ LOG_TOOL_RESULTS │ LOG_TOOL_RESULTS│ false  │ Also log each tool's outcome (see logger.ts)   │
  * └──────────────────┴──────────────┴───────────┴──────────────────────────────────────────────┘
  */
 
@@ -28,6 +29,11 @@ function parseLogLevel(raw: string | undefined): LogLevel {
   return raw && (LOG_LEVELS as readonly string[]).includes(raw) ? (raw as LogLevel) : "info";
 }
 
+/** Coerce an env string to a boolean. Anything but 1/true/yes/on is false. */
+function parseBool(raw: string | undefined): boolean {
+  return raw !== undefined && ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
+}
+
 export interface Env {
   /** Host of Chrome's remote-debugging endpoint. */
   readonly CDP_HOST: string;
@@ -39,6 +45,12 @@ export interface Env {
   readonly LOG_LEVEL: LogLevel;
   /** Optional file path to also append logs to, or null to skip file logging. */
   readonly LOG_FILE: string | null;
+  /**
+   * When true, every tool call also logs how it FINISHED (duration, ok/error,
+   * result preview) — turning LOG_FILE into a full trace of an agent session.
+   * Off by default: it is noisy, and results can contain page data. See logger.ts.
+   */
+  readonly LOG_TOOL_RESULTS: boolean;
 }
 
 /** The single, typed, read-only view of all runtime configuration. */
@@ -47,8 +59,9 @@ export const ENV: Env = Object.freeze({
   // port binds only to 127.0.0.1, while "localhost" resolves to ::1 (IPv6)
   // first on many systems (e.g. Windows + Node 18+), causing ECONNREFUSED.
   CDP_HOST: process.env.CDP_HOST || "127.0.0.1",
-  CDP_PORT: parseInt(process.env.CDP_PORT || "9222", 10),
+  CDP_PORT: parseInt(process.env.CDP_PORT || "9999", 10),
   CDP_TARGET_URL: process.env.CDP_TARGET_URL || null,
   LOG_LEVEL: parseLogLevel(process.env.LOG_LEVEL),
   LOG_FILE: process.env.LOG_FILE || null,
+  LOG_TOOL_RESULTS: parseBool(process.env.LOG_TOOL_RESULTS),
 });
